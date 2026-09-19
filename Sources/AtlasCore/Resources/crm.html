@@ -1,0 +1,1886 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  ATLAS CRM.
+
+  Every record on this page is the user's own text. It is written to the DOM
+  with textContent or through esc() — never as raw innerHTML — so a company
+  called <script> is a company called <script>, not a script.
+
+  The page cannot reach the network: default-src 'none' with no connect-src,
+  img-src or font-src means fetch, XHR, WebSocket, images and web fonts are all
+  refused by the policy itself rather than by convention. style-src and
+  script-src allow 'unsafe-inline' only because the shared stylesheet is
+  injected as a <style> and this file's own script is inline; there is no
+  'self', so no sibling file loads either.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATLAS CRM</title>
+<style>
+/* Shared tokens, reset, controls and components arrive from atlas-theme.css /
+   atlas-components.css, injected ahead of this block. Only the CRM's own
+   layout lives here. */
+html,body{overflow:hidden;background:var(--bg)}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;
+  background:radial-gradient(circle at 14% -8%,rgba(255,255,255,.105),transparent 34%),
+    radial-gradient(circle at 92% 18%,rgba(255,255,255,.04),transparent 28%),
+    linear-gradient(rgba(255,255,255,.012) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.012) 1px,transparent 1px);
+  background-size:auto,auto,48px 48px,48px 48px;opacity:.72}
+#app{position:relative;display:flex;flex-direction:column;height:100%;isolation:isolate}
+
+/* ---------- toolbar ---------- */
+/* The identity block is the only part allowed to give up room. Without this it
+   keeps its intrinsic width and rides over the tabs at the normal ATLAS width.
+   Scoped to this page so the shared component is not altered for the others. */
+.bar{min-height:58px;padding:11px 18px;background:rgba(9,10,12,.84);
+  border-bottom-color:var(--edge-soft);backdrop-filter:blur(18px)}
+.bar .atlas-toolbar__id{flex:0 1 auto;min-width:0;padding-right:3px}
+.bar .atlas-toolbar__title{font-size:16px;font-weight:650;letter-spacing:-.02em}
+.bar .atlas-toolbar__context{min-width:0;overflow:hidden;text-overflow:ellipsis}
+#tabs{flex:none}
+#search{flex:0 1 260px;min-width:132px}
+/* Below this the tabs and the two actions need every pixel. */
+@media (max-width:1240px){ .bar .atlas-toolbar__context{display:none} }
+@media (max-width:1180px){ #search{display:none} }
+@media (max-width:820px){ .bar{gap:8px}.bar .atlas-toolbar__id{display:none}#tabs button{padding-inline:9px} }
+.bar .count{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-micro);color:var(--faint)}
+
+/* ---------- body ---------- */
+.body{flex:1;display:flex;min-height:0}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.scroll{flex:1;overflow-y:auto;padding:24px clamp(18px,3vw,38px) 42px;
+  scrollbar-gutter:stable}
+.pageIntro{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;
+  margin:2px 0 21px}
+.pageIntro .eyebrow{font-family:var(--mono);font-size:9px;letter-spacing:1.8px;
+  text-transform:uppercase;color:var(--gold-dim);margin-bottom:7px}
+.pageIntro h2{font-size:clamp(22px,2.6vw,32px);font-weight:430;letter-spacing:-.035em;
+  line-height:1.05;color:rgba(255,255,255,.95)}
+.pageIntro p{max-width:440px;margin-top:8px;color:var(--muted);font-size:var(--fs-body);line-height:1.55}
+.privacyMark{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--edge-soft);
+  border-radius:999px;color:var(--muted);font-size:var(--fs-micro);white-space:nowrap}
+.privacyMark::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ok);
+  box-shadow:0 0 10px rgba(52,199,89,.55)}
+
+/* ---------- overview ---------- */
+.overviewGrid{display:grid;grid-template-columns:minmax(300px,1.45fr) minmax(260px,.8fr);gap:14px}
+.pipelineHero{position:relative;min-height:186px;padding:22px 24px;overflow:hidden;
+  border:1px solid rgba(255,255,255,.12);border-radius:14px;
+  background:radial-gradient(circle at 18% 0%,rgba(255,255,255,.095),transparent 45%),
+    linear-gradient(145deg,rgba(28,30,35,.9),rgba(12,14,17,.95));
+  box-shadow:0 20px 55px rgba(0,0,0,.25),inset 0 1px rgba(255,255,255,.06)}
+.pipelineHero::after{content:"";position:absolute;width:260px;height:260px;right:-94px;top:-145px;
+  border:1px solid rgba(255,255,255,.10);border-radius:50%;box-shadow:0 0 0 30px rgba(255,255,255,.015)}
+.heroLabel,.metricLabel{font-size:var(--fs-micro);font-weight:700;letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--gold-dim)}
+.heroValue{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:clamp(38px,5vw,56px);
+  font-weight:260;letter-spacing:-.06em;color:var(--text);margin:15px 0 5px;line-height:1}
+.heroSub{font-size:var(--fs-meta);color:var(--muted)}
+.heroStats{display:flex;gap:34px;margin-top:24px;padding-top:16px;border-top:1px solid rgba(255,255,255,.07)}
+.heroStat strong{display:block;margin-top:6px;font-family:var(--mono);font-size:15px;font-weight:450;color:var(--text)}
+.metricRail{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tile{position:relative;border:1px solid var(--edge-soft);border-radius:11px;padding:15px 16px;
+  background:linear-gradient(145deg,rgba(255,255,255,.038),rgba(255,255,255,.012));
+  box-shadow:inset 0 1px rgba(255,255,255,.035)}
+.tile .k{font-size:var(--fs-micro);font-weight:700;letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--gold-dim)}
+.tile .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:23px;
+  font-weight:330;color:var(--text);margin-top:11px;line-height:1.1}
+.tile .s{font-size:var(--fs-micro);color:var(--faint);margin-top:3px}
+.tile.warn .v{color:var(--warn)}
+.tile.good .v{color:var(--gold)}
+.overviewLower{display:grid;grid-template-columns:minmax(300px,1fr) minmax(300px,1fr);gap:28px;margin-top:8px}
+
+.section{margin-top:25px}
+.section h2{font-size:var(--fs-label);font-weight:700;letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--gold-dim);margin-bottom:11px;padding-bottom:9px;
+  border-bottom:1px solid var(--edge-soft);
+  display:flex;align-items:center;gap:8px}
+.section h2 .n{color:var(--faint);font-weight:500;letter-spacing:var(--ls-micro)}
+
+.row{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:9px;
+  border:1px solid transparent;cursor:pointer;text-align:left;width:100%;
+  transition:background var(--dur-fast),border-color var(--dur-fast),transform var(--dur-fast)}
+.row:hover{background:rgba(255,255,255,.04);border-color:var(--edge-soft);transform:translateX(2px)}
+.row .avatar{display:grid;place-items:center;width:31px;height:31px;flex:none;border-radius:8px;
+  border:1px solid var(--edge);background:rgba(255,255,255,.055);color:var(--gold-dim);
+  font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.04em}
+.row .identity{flex:1;min-width:0}
+.row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:var(--fs-body);font-weight:540}
+.row .sub{font-size:var(--fs-micro);color:var(--faint);white-space:nowrap;margin-top:3px}
+.row .amt{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-meta);color:var(--gold-dim);white-space:nowrap}
+.row .due{font-family:var(--mono);font-size:var(--fs-micro);white-space:nowrap;color:var(--muted);
+  padding:3px 7px;border-radius:999px;background:rgba(255,255,255,.035)}
+.row .due.over{color:var(--err)}
+.row.sel{background:rgba(255,255,255,.075);border-color:var(--edge)}
+
+.feed{display:flex;flex-direction:column;gap:2px}
+.feed .item{position:relative;display:flex;gap:12px;padding:8px 10px 8px 20px;border-radius:var(--r-md)}
+.feed .item::before{content:"";position:absolute;left:7px;top:14px;width:4px;height:4px;border-radius:50%;
+  background:var(--gold-dim);box-shadow:0 0 0 3px rgba(255,255,255,.05)}
+.feed .item:hover{background:rgba(255,255,255,.025)}
+.feed .when{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-micro);color:var(--faint);min-width:92px}
+.feed .what{flex:1;min-width:0;font-size:var(--fs-meta);line-height:1.45}
+.feed .tag{font-size:var(--fs-micro);letter-spacing:var(--ls-micro);text-transform:uppercase;
+  color:var(--cyan-dim);white-space:nowrap}
+
+/* ---------- pipeline ---------- */
+.board{flex:1;display:flex;gap:12px;padding:22px clamp(18px,3vw,34px) 30px;overflow-x:auto;align-items:flex-start;
+  min-height:0}
+.col{position:relative;flex:0 0 226px;max-height:100%;display:flex;flex-direction:column;
+  background:linear-gradient(180deg,rgba(20,24,31,.86),rgba(11,14,19,.72));border:1px solid var(--edge-soft);
+  border-radius:12px;overflow:hidden;box-shadow:0 16px 35px rgba(0,0,0,.18)}
+.col::before{content:"";height:2px;background:linear-gradient(90deg,var(--gold-dim),transparent 68%)}
+.col.won::before{background:linear-gradient(90deg,var(--ok),transparent 68%)}
+.col.lost::before{background:linear-gradient(90deg,var(--muted),transparent 68%)}
+.col .head{display:flex;align-items:center;gap:8px;padding:13px 13px 7px;flex:none}
+.col .name{font-size:var(--fs-label);font-weight:700;letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--text);flex:1}
+.col .n{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-micro);color:var(--faint)}
+.col .total{padding:0 13px 11px;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-micro);color:var(--gold-dim)}
+.col .cards{flex:1;overflow-y:auto;padding:0 8px 8px;display:flex;flex-direction:column;
+  gap:6px;min-height:52px}
+.col.over .cards{background:rgba(255,255,255,.055);border-radius:var(--r-md)}
+.col.won .name{color:var(--ok)}
+.col.lost .name{color:var(--muted)}
+
+.card{background:linear-gradient(145deg,rgba(34,39,49,.96),rgba(22,26,34,.94));
+  border:1px solid var(--edge-soft);border-radius:8px;padding:11px 11px;cursor:grab;
+  text-align:left;width:100%;transition:border-color var(--dur-fast),transform var(--dur-fast),box-shadow var(--dur-fast)}
+.card:hover{border-color:rgba(255,255,255,.22);transform:translateY(-1px);box-shadow:0 8px 18px rgba(0,0,0,.24)}
+.card.dragging{opacity:.45}
+.card .t{font-size:var(--fs-body);line-height:1.35;word-break:break-word}
+.card .m{display:flex;flex-wrap:wrap;gap:8px;margin-top:5px;align-items:baseline}
+.card .co{font-size:var(--fs-micro);color:var(--muted);min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.card .amt{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-micro);color:var(--gold-dim)}
+.card .pb{font-family:var(--mono);font-size:var(--fs-micro);color:var(--cyan-dim)}
+.card .due{font-family:var(--mono);font-size:var(--fs-micro);color:var(--muted)}
+.card .due.over{color:var(--err)}
+
+/* ---------- table ---------- */
+.tbl{width:100%;border-collapse:collapse;font-size:var(--fs-body)}
+.tbl th{position:sticky;top:0;z-index:1;text-align:left;white-space:nowrap;cursor:pointer;
+  padding:9px 11px;background:var(--panel);border-bottom:1px solid var(--edge-soft);
+  font-size:var(--fs-micro);font-weight:700;letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--gold-dim);user-select:none}
+.tbl th:hover{color:var(--gold)}
+.tbl th .dir{margin-left:4px;color:var(--faint)}
+.tbl th.on .dir{color:var(--gold)}
+.tbl td{padding:9px 11px;border-bottom:1px solid rgba(255,255,255,.045);vertical-align:middle}
+.tbl tbody tr{cursor:pointer}
+.tbl tbody tr:hover{background:rgba(255,255,255,.03)}
+.tbl tbody tr.sel{background:rgba(212,176,89,.09)}
+.tbl .num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;
+  white-space:nowrap}
+.tbl .muted{color:var(--muted);font-size:var(--fs-meta)}
+.tbl .over{color:var(--err)}
+.tbl .pill{font-size:var(--fs-micro);letter-spacing:var(--ls-micro);text-transform:uppercase;
+  padding:2px 7px;border-radius:999px;border:1px solid var(--edge-soft);color:var(--muted);
+  white-space:nowrap}
+.tblWrap{overflow:auto;border:1px solid var(--edge-soft);border-radius:var(--r-lg)}
+
+/* ---------- saved views ---------- */
+#views{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.viewChip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 11px;
+  border-radius:999px;background:var(--panel);border:1px solid var(--edge-soft);
+  color:var(--muted);font-size:var(--fs-micro);font-weight:700;
+  letter-spacing:var(--ls-caps);text-transform:uppercase;white-space:nowrap;
+  transition:color var(--dur-fast),border-color var(--dur-fast)}
+.viewChip:hover{color:var(--text);border-color:rgba(255,255,255,.16)}
+.viewChip.on{background:rgba(212,176,89,.14);border-color:var(--edge);color:var(--gold)}
+.viewChip .x{opacity:.5;font-size:11px}
+.viewChip .x:hover{opacity:1;color:var(--err)}
+
+/* ---------- lists ---------- */
+.list{display:flex;flex-direction:column;gap:3px;max-width:1040px}
+.listHead{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(130px,.8fr) 110px 150px;
+  gap:12px;padding:0 12px 9px 55px;border-bottom:1px solid var(--edge-soft);margin-bottom:5px;
+  font-size:9px;font-weight:700;letter-spacing:1.25px;text-transform:uppercase;color:var(--faint)}
+.list>.row{display:grid;grid-template-columns:31px minmax(160px,1.5fr) minmax(110px,.8fr) 110px 150px}
+
+/* ---------- detail panel ---------- */
+.detail{width:min(380px,40vw);flex:none;border-left:1px solid var(--edge-soft);
+  background:rgba(10,12,17,.92);backdrop-filter:blur(20px);display:flex;flex-direction:column;min-height:0;
+  box-shadow:-22px 0 60px rgba(0,0,0,.26)}
+.detail .dhead{display:flex;align-items:center;gap:8px;padding:17px 18px 14px;flex:none;
+  border-bottom:1px solid var(--edge-soft)}
+.detail .dhead h2{flex:1;min-width:0;font-size:var(--fs-label);font-weight:700;
+  letter-spacing:var(--ls-caps);text-transform:uppercase;color:var(--gold-dim)}
+.detail .dbody{flex:1;overflow-y:auto;padding:10px 18px 24px}
+.detail .field{margin-bottom:10px}
+.detail .field:last-child{margin-bottom:0}
+.detail .grid2{display:flex;gap:9px}
+.detail .grid2>*{flex:1;min-width:0}
+.detail textarea{min-height:66px;resize:vertical}
+.detail .acts{display:flex;gap:8px;margin-top:20px;padding-top:14px;border-top:1px solid var(--edge-soft);align-items:center}
+.detail .acts .sp{flex:1}
+
+/* ---------- activity composer ---------- */
+.compose{display:flex;gap:7px;margin-top:8px}
+.compose select{flex:0 0 96px}
+.compose input{flex:1;min-width:0}
+
+/* ---------- status line ---------- */
+#status{flex:none;display:flex;align-items:center;gap:8px;padding:6px 18px;min-height:27px;
+  border-top:1px solid rgba(255,255,255,.045);background:rgba(7,9,12,.92);
+  font-size:var(--fs-micro);letter-spacing:var(--ls-micro);color:var(--faint)}
+#status.busy{color:var(--cyan)}
+#status.bad{color:var(--err)}
+#status.ok{color:var(--gold-dim)}
+#status .dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
+
+/* ---------- confirm ---------- */
+#veil{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;z-index:40;
+  align-items:center;justify-content:center}
+#veil.on{display:flex}
+#confirm{width:380px;padding:18px}
+#confirm p{font-size:var(--fs-body);line-height:1.55;color:var(--muted);margin-top:10px}
+#confirm ul{margin:10px 0 0 18px;font-size:var(--fs-meta);color:var(--muted);line-height:1.6}
+#confirm .acts{display:flex;gap:9px;margin-top:18px;align-items:center}
+#confirm .acts .sp{flex:1}
+
+/* Empty states centre in whatever pane they land in. */
+.emptyWrap{flex:1;display:grid;place-items:center;min-height:320px}
+.emptyWrap .atlas-empty{max-width:440px;padding:34px;border:1px solid var(--edge-soft);border-radius:14px;
+  background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.01));
+  box-shadow:0 24px 70px rgba(0,0,0,.2)}
+@media(prefers-color-scheme:light){
+  body::before{background:radial-gradient(circle at 14% -8%,rgba(255,255,255,.94),transparent 36%),
+    radial-gradient(circle at 92% 18%,rgba(255,255,255,.72),transparent 30%),
+    linear-gradient(rgba(17,18,21,.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(17,18,21,.025) 1px,transparent 1px);background-size:auto,auto,48px 48px,48px 48px}
+  .pageIntro h2{color:var(--text)}
+  .bar{background:rgba(246,242,235,.88)}
+  .pipelineHero{border-color:rgba(17,18,21,.10);
+    background:radial-gradient(circle at 16% 0%,#fffdf8,transparent 48%),
+      linear-gradient(145deg,rgba(252,249,243,.96),rgba(231,226,216,.88));
+    box-shadow:0 20px 55px rgba(32,33,36,.08),inset 0 1px rgba(255,255,255,.9)}
+  .pipelineHero::after{border-color:rgba(17,18,21,.08);box-shadow:0 0 0 30px rgba(17,18,21,.012)}
+  .tile{background:linear-gradient(145deg,rgba(252,249,243,.92),rgba(235,230,220,.72));
+    box-shadow:inset 0 1px rgba(255,255,255,.9)}
+  .col{background:linear-gradient(180deg,rgba(252,249,243,.94),rgba(233,228,218,.82));
+    box-shadow:0 16px 35px rgba(32,33,36,.07)}
+  .card{background:linear-gradient(145deg,#fffdf8,rgba(242,238,230,.96))}
+  .detail{background:rgba(247,243,236,.95);box-shadow:-22px 0 60px rgba(32,33,36,.09)}
+  #status{background:rgba(240,236,228,.94)}
+  #veil{background:rgba(230,225,215,.68)}
+  .emptyWrap .atlas-empty{background:linear-gradient(145deg,rgba(252,249,243,.94),rgba(233,228,218,.74));
+    box-shadow:0 24px 70px rgba(32,33,36,.08)}
+}
+@media(max-width:900px){.overviewGrid,.overviewLower{grid-template-columns:1fr}.metricRail{grid-template-columns:repeat(4,1fr)}
+  .detail{width:min(360px,48vw)}.listHead{display:none}.list>.row{grid-template-columns:31px minmax(140px,1fr) auto auto}.list>.row>.sub{display:none}}
+@media(max-width:680px){.metricRail{grid-template-columns:1fr 1fr}.privacyMark{display:none}.scroll{padding-inline:16px}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar atlas-toolbar">
+    <div class="atlas-toolbar__id">
+      <h1 class="atlas-toolbar__title">CRM</h1>
+      <span class="atlas-toolbar__context" id="context">Local &amp; encrypted</span>
+    </div>
+    <div class="seg atlas-seg" id="tabs">
+      <button data-tab="overview" class="on">Overview</button>
+      <button data-tab="pipeline">Pipeline</button>
+      <button data-tab="table">Table</button>
+      <button data-tab="companies">Companies</button>
+      <button data-tab="contacts">Contacts</button>
+      <button data-tab="ideas">Ideas</button>
+    </div>
+    <div class="spacer atlas-spacer"></div>
+    <div id="search" class="atlas-field">
+      <input id="searchInput" placeholder="Search records" spellcheck="false" aria-label="Search CRM records">
+      <span class="atlas-field__hint" id="searchCount"></span>
+    </div>
+    <button class="atlas-btn" id="newIdea">New idea</button>
+    <button class="atlas-btn" id="newCompany">New company</button>
+    <button class="atlas-btn atlas-btn--primary" id="newOpportunity">New opportunity</button>
+  </div>
+
+  <div class="body">
+    <div class="main"><div class="scroll" id="view"></div></div>
+    <aside class="detail" id="detail" hidden>
+      <div class="dhead">
+        <h2 id="detailTitle">Record</h2>
+        <button class="atlas-iconbtn" id="closeDetail" aria-label="Close">&#10005;</button>
+      </div>
+      <div class="dbody" id="detailBody"></div>
+    </aside>
+  </div>
+
+  <div id="status" role="status" aria-live="polite"><span id="statusText">Loading&#8230;</span></div>
+</div>
+
+<div id="veil"><div class="atlas-sheet" id="confirm" role="dialog" aria-modal="true"></div></div>
+
+<script>
+'use strict';
+
+/* ---------- pure logic (tested in Tests/crm_view_test.js) ---------- */
+
+/* Every record field passes through here before it reaches the DOM.
+   The five characters below are the ones that let text become markup. */
+function escapeHtml(value){
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+/* Cents to a readable amount. Whole dollars unless there are real cents in it,
+   because a pipeline column full of ".00" is just noise. */
+function formatMoney(cents){
+  const n = Number(cents);
+  if (!isFinite(n)) return '$0';
+  const negative = n < 0;
+  const abs = Math.abs(Math.round(n));
+  const dollars = Math.floor(abs / 100);
+  const rest = abs % 100;
+  let text = '$' + dollars.toLocaleString('en-US');
+  if (rest) text += '.' + String(rest).padStart(2, '0');
+  return negative ? '-' + text : text;
+}
+
+/* Compact form for tiles and column totals: $1.2M, $45.6k, $900. */
+function compactMoney(cents){
+  const dollars = Math.round(Number(cents) || 0) / 100;
+  const abs = Math.abs(dollars);
+  if (abs >= 1000000) return '$' + trimZero(dollars / 1000000) + 'M';
+  if (abs >= 1000) return '$' + trimZero(dollars / 1000) + 'k';
+  return '$' + Math.round(dollars).toLocaleString('en-US');
+}
+
+function trimZero(value){
+  return value.toFixed(1).replace(/\.0$/, '');
+}
+
+/* Deals bucketed by stage, in board order, with the stage totals the columns
+   show. Unknown stages are dropped rather than inventing a column. */
+function groupByStage(opportunities, stages){
+  const order = (stages || []).map(s => s.id);
+  const buckets = new Map(order.map(id => [id, []]));
+  (opportunities || []).forEach(deal => {
+    if (buckets.has(deal.stage)) buckets.get(deal.stage).push(deal);
+  });
+  return order.map((id, i) => {
+    const deals = buckets.get(id);
+    return {
+      id: id,
+      title: (stages[i] && stages[i].title) || id,
+      deals: deals,
+      total: deals.reduce((sum, d) => sum + (Number(d.valueCents) || 0), 0)
+    };
+  });
+}
+
+/* Overdue or due today, and still in play. Mirrors the same rule in Swift —
+   the page decides what to colour red, the store decides what is true. */
+function isOverdue(deal, now){
+  if (!deal || !deal.nextFollowUpAt) return false;
+  if (deal.stage === 'won' || deal.stage === 'lost') return false;
+  return deal.nextFollowUpAt * 1000 <= (now || Date.now());
+}
+
+/* "Today", "3d ago", "in 5d", or a date once it is far enough out to need one. */
+function relativeDay(epochSeconds, now){
+  if (!epochSeconds) return '';
+  const then = new Date(epochSeconds * 1000);
+  const today = new Date(now || Date.now());
+  const days = Math.round((startOfDay(then) - startOfDay(today)) / 86400000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days === -1) return 'Yesterday';
+  if (days > 1 && days <= 14) return 'in ' + days + 'd';
+  if (days < -1 && days >= -14) return -days + 'd ago';
+  return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function startOfDay(date){
+  const copy = new Date(date);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+}
+
+/* Name lookup for the company a record belongs to. Returns '' rather than
+   throwing when the link is empty or dangling. */
+function companyName(companies, id){
+  if (!id) return '';
+  const hit = (companies || []).find(c => c.id === id);
+  return hit ? hit.name : '';
+}
+
+/* The overview tiles, derived from the summary the bridge sent. */
+function summaryTiles(summary){
+  const s = summary || {};
+  return [
+    { key: 'Open pipeline', value: compactMoney(s.openValueCents || 0),
+      sub: (s.openCount || 0) + (s.openCount === 1 ? ' open deal' : ' open deals') },
+    { key: 'Weighted', value: compactMoney(s.weightedValueCents || 0),
+      sub: 'by probability' },
+    { key: 'Won', value: compactMoney(s.wonValueCents || 0),
+      sub: (s.wonCount || 0) + (s.wonCount === 1 ? ' deal' : ' deals'), tone: 'good' },
+    { key: 'Follow up', value: String(s.needingFollowUp || 0),
+      sub: 'due or overdue', tone: (s.needingFollowUp || 0) > 0 ? 'warn' : '' },
+    { key: 'Companies', value: String(s.companyCount || 0),
+      sub: (s.contactCount || 0) + ' contacts' }
+  ];
+}
+
+/* Dollars typed into a form to whole cents, tolerating "$1,250.50".
+   Anything that is not a number at all becomes 0 rather than NaN. */
+function parseMoney(text){
+  const cleaned = String(text == null ? '' : text).replace(/[^0-9.\-]/g, '');
+  const value = parseFloat(cleaned);
+  if (!isFinite(value)) return 0;
+  return Math.round(value * 100);
+}
+
+/* A yyyy-mm-dd from a date input to epoch seconds at local midday.
+   Midday, not midnight, so a timezone shift cannot roll it to the day before. */
+function parseDateInput(text){
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(text || '').trim());
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0);
+  return isNaN(date.getTime()) ? null : Math.floor(date.getTime() / 1000);
+}
+
+/* Epoch seconds back to the yyyy-mm-dd a date input wants. */
+function toDateInput(epochSeconds){
+  if (!epochSeconds) return '';
+  const date = new Date(epochSeconds * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+}
+
+/* The rules a saved view encodes, mirroring ViewFilter in Swift so the page and
+   the store never disagree about what a view means. */
+function applyView(deals, view, now){
+  let out = (deals || []).slice();
+  if (!view) return sortDeals(out, 'updated', false);
+  if (view.stage) out = out.filter(d => d.stage === view.stage);
+  if (view.minValueCents != null) out = out.filter(d => (d.valueCents || 0) >= view.minValueCents);
+  if (view.staleDays != null){
+    const cutoff = (now || Date.now()) / 1000 - view.staleDays * 86400;
+    out = out.filter(d => (d.updatedAt || 0) <= cutoff);
+  }
+  return sortDeals(out, view.sortField || 'updated', !!view.sortAscending);
+}
+
+/* A deal with no follow-up date sorts last either way — an empty cell is not
+   "soonest", and floating it to the top buries the ones that are. */
+function sortDeals(deals, field, ascending){
+  const list = (deals || []).slice();
+  const stages = ['lead','contacted','qualified','proposal','won','lost'];
+  const key = {
+    name: d => String(d.title || '').toLowerCase(),
+    value: d => Number(d.valueCents) || 0,
+    stage: d => stages.indexOf(d.stage),
+    probability: d => Number(d.probability) || 0,
+    followUp: d => d.nextFollowUpAt || Number.MAX_SAFE_INTEGER,
+    updated: d => d.updatedAt || 0
+  }[field] || (d => d.updatedAt || 0);
+
+  list.sort((a, b) => {
+    const x = key(a), y = key(b);
+    if (x < y) return -1;
+    if (x > y) return 1;
+    return 0;
+  });
+  return ascending ? list : list.reverse();
+}
+
+/* ---------- end pure logic ---------- */
+
+const $ = id => document.getElementById(id);
+
+const state = {
+  tab: 'overview',
+  data: null,
+  loading: true,
+  selection: null,      // { type, id } or { type, id: null } for a new record
+  pendingDelete: null,  // { type, id, impact }
+  activeViewId: null,   // the saved view in force, if any
+  sort: { field: 'updated', ascending: false },
+  fatal: null           // the store could not be opened; nothing will load
+};
+
+/* The only way this page talks to the app. Every call names one of the
+   allowlisted actions; there is no generic escape hatch here by design. */
+function send(action, payload){
+  const message = Object.assign({ action: action }, payload || {});
+  try {
+    window.webkit.messageHandlers.atlas.postMessage(JSON.stringify(message));
+  } catch (e) {
+    setStatus('Not connected to ATLAS.', 'bad');
+  }
+}
+
+function setStatus(text, tone){
+  const bar = $('status');
+  bar.className = tone || '';
+  $('statusText').textContent = text;
+}
+
+/* ---------- rendering ---------- */
+
+function draw(){
+  const view = $('view');
+  const main = view.parentElement;
+
+  // The pipeline is the one tab that owns its own scrolling.
+  if (state.tab === 'pipeline'){
+    view.style.display = 'none';
+    let board = document.getElementById('board');
+    if (!board){
+      board = document.createElement('div');
+      board.className = 'board';
+      board.id = 'board';
+      main.appendChild(board);
+    }
+    board.style.display = 'flex';
+    drawPipeline(board);
+    return;
+  }
+
+  const board = document.getElementById('board');
+  if (board) board.style.display = 'none';
+  view.style.display = 'block';
+  view.textContent = '';
+
+  if (state.fatal){
+    view.appendChild(emptyBlock('&#9888;', 'Cannot open the CRM', state.fatal));
+    return;
+  }
+  if (state.loading){
+    view.appendChild(emptyBlock('&#9711;', 'Loading', 'Reading the encrypted CRM database.'));
+    return;
+  }
+  if (state.tab === 'overview') drawOverview(view);
+  if (state.tab === 'table') drawTable(view);
+  if (state.tab === 'companies') drawCompanies(view);
+  if (state.tab === 'contacts') drawContacts(view);
+  if (state.tab === 'ideas') drawIdeas(view);
+}
+
+function emptyBlock(mark, title, body, actions){
+  const wrap = document.createElement('div');
+  wrap.className = 'emptyWrap';
+  const box = document.createElement('div');
+  box.className = 'atlas-empty';
+  box.innerHTML =
+    '<div class="atlas-empty__mark">' + mark + '</div>' +
+    '<div class="atlas-empty__title">' + escapeHtml(title) + '</div>' +
+    '<div class="atlas-empty__body">' + escapeHtml(body) + '</div>';
+  if (actions && actions.length){
+    const row = document.createElement('div');
+    row.className = 'atlas-empty__actions';
+    actions.forEach(action => {
+      const button = document.createElement('button');
+      button.className = 'atlas-btn' + (action.primary ? ' atlas-btn--primary' : '');
+      button.textContent = action.label;
+      button.addEventListener('click', action.run);
+      row.appendChild(button);
+    });
+    box.appendChild(row);
+  }
+  wrap.appendChild(box);
+  return wrap;
+}
+
+function section(title, count){
+  const wrap = document.createElement('div');
+  wrap.className = 'section';
+  const heading = document.createElement('h2');
+  heading.textContent = title;
+  if (count != null){
+    const n = document.createElement('span');
+    n.className = 'n';
+    n.textContent = count;
+    heading.appendChild(n);
+  }
+  wrap.appendChild(heading);
+  return wrap;
+}
+
+function introBlock(eyebrow, title, body){
+  const intro = document.createElement('div');
+  intro.className = 'pageIntro';
+  const copy = document.createElement('div');
+  const overline = document.createElement('div');
+  overline.className = 'eyebrow';
+  overline.textContent = eyebrow;
+  const heading = document.createElement('h2');
+  heading.textContent = title;
+  const description = document.createElement('p');
+  description.textContent = body;
+  copy.appendChild(overline); copy.appendChild(heading); copy.appendChild(description);
+  const privacy = document.createElement('div');
+  privacy.className = 'privacyMark';
+  privacy.textContent = 'Encrypted on this Mac';
+  intro.appendChild(copy); intro.appendChild(privacy);
+  return intro;
+}
+
+function initials(name){
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '—';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+
+function drawOverview(view){
+  const data = state.data;
+  const hasAnything = data.companies.length || data.opportunities.length || data.contacts.length;
+  if (!hasAnything){
+    view.appendChild(emptyBlock('A', 'Nothing tracked yet',
+      'This CRM is local and encrypted — nothing leaves this machine. Start with the company you are working with, then add the work you are chasing.',
+      [{ label: 'Add the first company', primary: true, run: () => openDetail('company', null) },
+       { label: 'Add an opportunity', run: () => openDetail('opportunity', null) }]));
+    return;
+  }
+
+  view.appendChild(introBlock('Private client intelligence', 'Business at a glance',
+    'Pipeline, relationships and the next actions that keep work moving.'));
+
+  const summary = summaryTiles(data.summary);
+  const top = document.createElement('div');
+  top.className = 'overviewGrid';
+
+  const hero = document.createElement('div');
+  hero.className = 'pipelineHero';
+  const label = document.createElement('div'); label.className = 'heroLabel'; label.textContent = summary[0].key;
+  const value = document.createElement('div'); value.className = 'heroValue'; value.textContent = summary[0].value;
+  const sub = document.createElement('div'); sub.className = 'heroSub'; sub.textContent = summary[0].sub;
+  const stats = document.createElement('div'); stats.className = 'heroStats';
+  [summary[1], summary[2]].forEach(metric => {
+    const stat = document.createElement('div'); stat.className = 'heroStat';
+    const k = document.createElement('div'); k.className = 'metricLabel'; k.textContent = metric.key;
+    const v = document.createElement('strong'); v.textContent = metric.value;
+    stat.appendChild(k); stat.appendChild(v); stats.appendChild(stat);
+  });
+  hero.appendChild(label); hero.appendChild(value); hero.appendChild(sub); hero.appendChild(stats);
+  top.appendChild(hero);
+
+  const tiles = document.createElement('div');
+  tiles.className = 'metricRail';
+  summary.slice(3).forEach(tile => {
+    const box = document.createElement('div');
+    box.className = 'tile' + (tile.tone ? ' ' + tile.tone : '');
+    const k = document.createElement('div'); k.className = 'k'; k.textContent = tile.key;
+    const v = document.createElement('div'); v.className = 'v'; v.textContent = tile.value;
+    const s = document.createElement('div'); s.className = 's'; s.textContent = tile.sub;
+    box.appendChild(k); box.appendChild(v); box.appendChild(s);
+    tiles.appendChild(box);
+  });
+  const active = document.createElement('div');
+  active.className = 'tile';
+  const ak = document.createElement('div'); ak.className = 'k'; ak.textContent = 'Active deals';
+  const av = document.createElement('div'); av.className = 'v'; av.textContent = String(data.summary.openCount || 0);
+  const as = document.createElement('div'); as.className = 's'; as.textContent = 'in motion';
+  active.appendChild(ak); active.appendChild(av); active.appendChild(as); tiles.appendChild(active);
+  const people = document.createElement('div');
+  people.className = 'tile';
+  const pk = document.createElement('div'); pk.className = 'k'; pk.textContent = 'Relationships';
+  const pv = document.createElement('div'); pv.className = 'v'; pv.textContent = String(data.summary.contactCount || 0);
+  const ps = document.createElement('div'); ps.className = 's'; ps.textContent = 'known contacts';
+  people.appendChild(pk); people.appendChild(pv); people.appendChild(ps); tiles.appendChild(people);
+  top.appendChild(tiles);
+  view.appendChild(top);
+
+  const lower = document.createElement('div');
+  lower.className = 'overviewLower';
+
+  const follow = section('Needs follow-up', data.followUps.length);
+  if (!data.followUps.length){
+    const none = document.createElement('div');
+    none.className = 'atlas-empty atlas-empty--inline';
+    none.innerHTML = '<div class="atlas-empty__body">Nothing is waiting on you right now.</div>';
+    follow.appendChild(none);
+  } else {
+    data.followUps.forEach(deal => follow.appendChild(dealRow(deal)));
+  }
+  lower.appendChild(follow);
+
+  const feed = section('Recent activity', data.activities.length);
+  if (!data.activities.length){
+    const none = document.createElement('div');
+    none.className = 'atlas-empty atlas-empty--inline';
+    none.innerHTML = '<div class="atlas-empty__body">Calls, notes and stage changes show up here as you log them.</div>';
+    feed.appendChild(none);
+  } else {
+    const list = document.createElement('div');
+    list.className = 'feed';
+    data.activities.slice(0, 25).forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'item';
+      const when = document.createElement('div');
+      when.className = 'when';
+      when.textContent = relativeDay(item.occurredAt);
+      const what = document.createElement('div');
+      what.className = 'what';
+      what.textContent = item.summary;
+      const tag = document.createElement('div');
+      tag.className = 'tag';
+      tag.textContent = kindTitle(item.kind);
+      row.appendChild(when); row.appendChild(what); row.appendChild(tag);
+      list.appendChild(row);
+    });
+    feed.appendChild(list);
+  }
+  lower.appendChild(feed);
+  view.appendChild(lower);
+}
+
+function kindTitle(id){
+  const hit = (state.data.activityKinds || []).find(k => k.id === id);
+  return hit ? hit.title : id;
+}
+
+function dealRow(deal){
+  const row = document.createElement('button');
+  row.className = 'row' + (isSelected('opportunity', deal.id) ? ' sel' : '');
+  const nm = document.createElement('div');
+  nm.className = 'nm';
+  nm.textContent = deal.title;
+  const co = document.createElement('div');
+  co.className = 'sub';
+  co.textContent = companyName(state.data.companies, deal.companyId);
+  const amt = document.createElement('div');
+  amt.className = 'amt';
+  amt.textContent = formatMoney(deal.valueCents);
+  const due = document.createElement('div');
+  due.className = 'due' + (isOverdue(deal) ? ' over' : '');
+  due.textContent = relativeDay(deal.nextFollowUpAt);
+  row.appendChild(nm); row.appendChild(co); row.appendChild(amt); row.appendChild(due);
+  row.addEventListener('click', () => openDetail('opportunity', deal.id));
+  return row;
+}
+
+function drawPipeline(board){
+  board.textContent = '';
+  if (state.loading) return;
+  const data = state.data;
+
+  if (!data.opportunities.length){
+    board.appendChild(emptyBlock('A', 'No opportunities yet',
+      'Track the work you are chasing. Drag a card between columns to move it through the pipeline.',
+      [{ label: 'Add an opportunity', primary: true, run: () => openDetail('opportunity', null) }]));
+    return;
+  }
+
+  groupByStage(data.opportunities, data.stages).forEach(column => {
+    const col = document.createElement('div');
+    col.className = 'col ' + column.id;
+    col.dataset.stage = column.id;
+
+    const head = document.createElement('div');
+    head.className = 'head';
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = column.title;
+    const n = document.createElement('div');
+    n.className = 'n';
+    n.textContent = column.deals.length;
+    head.appendChild(name); head.appendChild(n);
+    col.appendChild(head);
+
+    const total = document.createElement('div');
+    total.className = 'total';
+    total.textContent = compactMoney(column.total);
+    col.appendChild(total);
+
+    const cards = document.createElement('div');
+    cards.className = 'cards';
+    column.deals.forEach(deal => cards.appendChild(dealCard(deal)));
+    col.appendChild(cards);
+
+    // Native HTML5 drag and drop — no library, so nothing extra has to load.
+    col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('over'); });
+    col.addEventListener('dragleave', () => col.classList.remove('over'));
+    col.addEventListener('drop', e => {
+      e.preventDefault();
+      col.classList.remove('over');
+      const id = e.dataTransfer.getData('text/plain');
+      const deal = data.opportunities.find(d => d.id === id);
+      if (!id || !deal || deal.stage === column.id) return;
+      setStatus('Moving…', 'busy');
+      send('setStage', { id: id, stage: column.id });
+    });
+
+    board.appendChild(col);
+  });
+}
+
+function dealCard(deal){
+  const card = document.createElement('button');
+  card.className = 'card';
+  card.draggable = true;
+  card.dataset.id = deal.id;
+
+  const t = document.createElement('div');
+  t.className = 't';
+  t.textContent = deal.title;
+  card.appendChild(t);
+
+  const meta = document.createElement('div');
+  meta.className = 'm';
+  const co = companyName(state.data.companies, deal.companyId);
+  if (co){
+    const el = document.createElement('span');
+    el.className = 'co';
+    el.textContent = co;
+    meta.appendChild(el);
+  }
+  if (deal.valueCents){
+    const el = document.createElement('span');
+    el.className = 'amt';
+    el.textContent = compactMoney(deal.valueCents);
+    meta.appendChild(el);
+  }
+  if (deal.probability){
+    const el = document.createElement('span');
+    el.className = 'pb';
+    el.textContent = deal.probability + '%';
+    meta.appendChild(el);
+  }
+  if (deal.nextFollowUpAt){
+    const el = document.createElement('span');
+    el.className = 'due' + (isOverdue(deal) ? ' over' : '');
+    el.textContent = relativeDay(deal.nextFollowUpAt);
+    meta.appendChild(el);
+  }
+  card.appendChild(meta);
+
+  card.addEventListener('dragstart', e => {
+    e.dataTransfer.setData('text/plain', deal.id);
+    e.dataTransfer.effectAllowed = 'move';
+    card.classList.add('dragging');
+  });
+  card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  card.addEventListener('click', () => openDetail('opportunity', deal.id));
+  return card;
+}
+
+/* The saved-view chips. Clicking one applies it; the × removes it. */
+function drawViewBar(host){
+  const bar = document.createElement('div');
+  bar.id = 'views';
+
+  const all = document.createElement('button');
+  all.className = 'viewChip' + (state.activeViewId ? '' : ' on');
+  all.textContent = 'All deals';
+  all.addEventListener('click', () => { state.activeViewId = null; draw(); });
+  bar.appendChild(all);
+
+  (state.data.views || []).filter(v => v.scope === 'opportunities').forEach(v => {
+    const chip = document.createElement('button');
+    chip.className = 'viewChip' + (state.activeViewId === v.id ? ' on' : '');
+
+    const label = document.createElement('span');
+    label.textContent = v.name;
+    chip.appendChild(label);
+
+    const x = document.createElement('span');
+    x.className = 'x';
+    x.textContent = '\u00D7';
+    x.title = 'Remove this view';
+    x.addEventListener('click', e => {
+      e.stopPropagation();
+      if (state.activeViewId === v.id) state.activeViewId = null;
+      setStatus('Removing…', 'busy');
+      send('deleteView', { id: v.id });
+    });
+    chip.appendChild(x);
+
+    chip.addEventListener('click', () => {
+      state.activeViewId = v.id;
+      state.sort = { field: v.sortField || 'updated', ascending: !!v.sortAscending };
+      draw();
+    });
+    bar.appendChild(chip);
+  });
+
+  const save = document.createElement('button');
+  save.className = 'viewChip';
+  save.textContent = '+ Save this view';
+  save.title = 'Keep the current search and sort under a name';
+  save.addEventListener('click', openSaveView);
+  bar.appendChild(save);
+
+  host.appendChild(bar);
+}
+
+function activeView(){
+  return (state.data.views || []).find(v => v.id === state.activeViewId) || null;
+}
+
+const COLUMNS = [
+  { id: 'name', label: 'Deal' },
+  { id: 'company', label: 'Company', sort: null },
+  { id: 'stage', label: 'Stage' },
+  { id: 'value', label: 'Value', num: true },
+  { id: 'probability', label: '%', num: true },
+  { id: 'followUp', label: 'Follow-up' },
+  { id: 'updated', label: 'Updated' }
+];
+
+function drawTable(host){
+  const data = state.data;
+  drawViewBar(host);
+
+  const view = activeView();
+  // The chips carry a saved sort; clicking a header overrides it for now.
+  const effective = view
+    ? Object.assign({}, view, { sortField: state.sort.field,
+                                sortAscending: state.sort.ascending })
+    : { sortField: state.sort.field, sortAscending: state.sort.ascending };
+  const rows = applyView(data.opportunities, effective);
+
+  if (!rows.length){
+    host.appendChild(emptyBlock('&#9636;',
+      view ? 'Nothing matches this view' : 'No opportunities yet',
+      view ? 'Loosen the filter, or pick All deals to see everything.'
+           : 'Track the work you are chasing and it will appear here.',
+      view ? [] : [{ label: 'Add an opportunity', primary: true,
+                     run: () => openDetail('opportunity', null) }]));
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'tblWrap';
+  const table = document.createElement('table');
+  table.className = 'tbl';
+
+  const head = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  COLUMNS.forEach(column => {
+    const th = document.createElement('th');
+    th.textContent = column.label;
+    if (column.num) th.className = 'num';
+    const sortable = column.sort !== null;
+    if (sortable){
+      if (state.sort.field === column.id){
+        th.className = (th.className + ' on').trim();
+        const dir = document.createElement('span');
+        dir.className = 'dir';
+        dir.textContent = state.sort.ascending ? '\u2191' : '\u2193';
+        th.appendChild(dir);
+      }
+      th.addEventListener('click', () => {
+        if (state.sort.field === column.id) state.sort.ascending = !state.sort.ascending;
+        else state.sort = { field: column.id, ascending: column.id === 'name' };
+        draw();
+      });
+    } else {
+      th.style.cursor = 'default';
+    }
+    headRow.appendChild(th);
+  });
+  head.appendChild(headRow);
+  table.appendChild(head);
+
+  const body = document.createElement('tbody');
+  rows.forEach(deal => {
+    const tr = document.createElement('tr');
+    if (isSelected('opportunity', deal.id)) tr.className = 'sel';
+
+    cell(tr, deal.title);
+    cell(tr, companyName(data.companies, deal.companyId), 'muted');
+
+    const stage = document.createElement('td');
+    const pill = document.createElement('span');
+    pill.className = 'pill';
+    pill.textContent = stageTitle(deal.stage);
+    stage.appendChild(pill);
+    tr.appendChild(stage);
+
+    cell(tr, formatMoney(deal.valueCents), 'num');
+    cell(tr, deal.probability ? deal.probability + '%' : '', 'num muted');
+    cell(tr, relativeDay(deal.nextFollowUpAt),
+         isOverdue(deal) ? 'muted over' : 'muted');
+    cell(tr, relativeDay(deal.updatedAt), 'muted');
+
+    tr.addEventListener('click', () => openDetail('opportunity', deal.id));
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+  wrap.appendChild(table);
+  host.appendChild(wrap);
+
+  const total = rows.reduce((sum, d) => sum + (Number(d.valueCents) || 0), 0);
+  const foot = document.createElement('div');
+  foot.className = 'atlas-empty__body';
+  foot.style.marginTop = '10px';
+  foot.textContent = rows.length + (rows.length === 1 ? ' deal · ' : ' deals · ')
+    + formatMoney(total);
+  host.appendChild(foot);
+}
+
+function cell(row, text, className){
+  const td = document.createElement('td');
+  td.textContent = text || '';
+  if (className) td.className = className;
+  row.appendChild(td);
+  return td;
+}
+
+function stageTitle(id){
+  const hit = (state.data.stages || []).find(s => s.id === id);
+  return hit ? hit.title : id;
+}
+
+/* Naming the current search and sort so it can be come back to. */
+function openSaveView(){
+  const sheet = $('confirm');
+  sheet.textContent = '';
+
+  const heading = document.createElement('h3');
+  heading.className = 'atlas-sheet__title';
+  heading.textContent = 'Save this view';
+  sheet.appendChild(heading);
+
+  const name = document.createElement('input');
+  name.className = 'atlas-input';
+  name.placeholder = 'Proposals over $10k';
+  name.style.marginTop = '10px';
+  sheet.appendChild(name);
+
+  const stageLabel = document.createElement('label');
+  stageLabel.className = 'atlas-label';
+  stageLabel.textContent = 'Stage';
+  sheet.appendChild(stageLabel);
+  const stage = document.createElement('select');
+  stage.className = 'atlas-input';
+  const any = document.createElement('option');
+  any.value = ''; any.textContent = 'Any stage';
+  stage.appendChild(any);
+  (state.data.stages || []).forEach(option => {
+    const el = document.createElement('option');
+    el.value = option.id; el.textContent = option.title;
+    stage.appendChild(el);
+  });
+  sheet.appendChild(stage);
+
+  const row = document.createElement('div');
+  row.style.display = 'flex';
+  row.style.gap = '9px';
+
+  const minWrap = document.createElement('div');
+  minWrap.style.flex = '1';
+  const minLabel = document.createElement('label');
+  minLabel.className = 'atlas-label';
+  minLabel.textContent = 'Worth at least';
+  const min = document.createElement('input');
+  min.className = 'atlas-input';
+  min.placeholder = '0.00';
+  minWrap.appendChild(minLabel); minWrap.appendChild(min);
+
+  const staleWrap = document.createElement('div');
+  staleWrap.style.flex = '1';
+  const staleLabel = document.createElement('label');
+  staleLabel.className = 'atlas-label';
+  staleLabel.textContent = 'Untouched for (days)';
+  const stale = document.createElement('input');
+  stale.className = 'atlas-input';
+  stale.placeholder = 'any';
+  staleWrap.appendChild(staleLabel); staleWrap.appendChild(stale);
+
+  row.appendChild(minWrap); row.appendChild(staleWrap);
+  sheet.appendChild(row);
+
+  const note = document.createElement('p');
+  note.textContent = 'The current search and sort order are saved with it.';
+  sheet.appendChild(note);
+
+  const acts = document.createElement('div');
+  acts.className = 'acts';
+  const sp = document.createElement('div');
+  sp.className = 'sp';
+  const cancel = document.createElement('button');
+  cancel.className = 'atlas-btn atlas-btn--ghost';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', dismissConfirm);
+  const go = document.createElement('button');
+  go.className = 'atlas-btn atlas-btn--primary';
+  go.textContent = 'Save view';
+  go.addEventListener('click', () => {
+    if (!name.value.trim()){ name.focus(); return; }
+    const payload = {
+      name: name.value,
+      scope: 'opportunities',
+      query: state.data.query || '',
+      sortField: state.sort.field,
+      sortAscending: state.sort.ascending
+    };
+    if (stage.value) payload.stage = stage.value;
+    const floor = parseMoney(min.value);
+    if (min.value.trim() && floor > 0) payload.minValueCents = floor;
+    const days = parseInt(stale.value, 10);
+    if (!isNaN(days) && days > 0) payload.staleDays = days;
+    setStatus('Saving…', 'busy');
+    send('saveView', payload);
+    dismissConfirm();
+  });
+  acts.appendChild(sp); acts.appendChild(cancel); acts.appendChild(go);
+  sheet.appendChild(acts);
+
+  $('veil').classList.add('on');
+  setTimeout(() => name.focus(), 40);
+}
+
+function drawCompanies(view){
+  const data = state.data;
+  if (!data.companies.length){
+    view.appendChild(emptyBlock('&#9638;',
+      data.query ? 'No matches' : 'No companies yet',
+      data.query
+        ? 'Nothing matches that search. Clear it to see everything.'
+        : 'Companies are the anchor for contacts, deals and history.',
+      data.query ? [] : [{ label: 'Add the first company', primary: true,
+                          run: () => openDetail('company', null) }]));
+    return;
+  }
+  view.appendChild(introBlock('Relationship directory', 'Companies',
+    'Every client, prospect and partner in one private workspace.'));
+  const list = document.createElement('div');
+  list.className = 'list';
+  const head = document.createElement('div');
+  head.className = 'listHead';
+  ['Company', 'Industry', 'Pipeline', 'Status'].forEach(label => {
+    const cell = document.createElement('div'); cell.textContent = label; head.appendChild(cell);
+  });
+  list.appendChild(head);
+  data.companies.forEach(company => {
+    const row = document.createElement('button');
+    row.className = 'row' + (isSelected('company', company.id) ? ' sel' : '');
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar'; avatar.textContent = initials(company.name);
+    const identity = document.createElement('div'); identity.className = 'identity';
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = company.name;
+    const sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = company.industry;
+    const deals = data.opportunities.filter(d => d.companyId === company.id).length;
+    const amt = document.createElement('div');
+    amt.className = 'amt';
+    amt.textContent = deals ? deals + (deals === 1 ? ' deal' : ' deals') : '';
+    const status = document.createElement('div');
+    status.className = 'due';
+    status.textContent = statusTitle(company.status);
+    identity.appendChild(nm);
+    row.appendChild(avatar); row.appendChild(identity); row.appendChild(sub); row.appendChild(amt); row.appendChild(status);
+    row.addEventListener('click', () => openDetail('company', company.id));
+    list.appendChild(row);
+  });
+  view.appendChild(list);
+}
+
+function statusTitle(id){
+  const hit = (state.data.companyStatuses || []).find(s => s.id === id);
+  return hit ? hit.title : id;
+}
+
+function drawContacts(view){
+  const data = state.data;
+  if (!data.contacts.length){
+    view.appendChild(emptyBlock('&#9737;',
+      data.query ? 'No matches' : 'No contacts yet',
+      data.query
+        ? 'Nothing matches that search. Clear it to see everything.'
+        : 'The people you actually deal with, and how they prefer to be reached.',
+      data.query ? [] : [{ label: 'Add a contact', primary: true,
+                          run: () => openDetail('contact', null) }]));
+    return;
+  }
+  view.appendChild(introBlock('People and context', 'Contacts',
+    'The humans behind every relationship and the best way to reach them.'));
+  const list = document.createElement('div');
+  list.className = 'list';
+  const head = document.createElement('div');
+  head.className = 'listHead';
+  ['Contact', 'Role', 'Company', 'Reach'].forEach(label => {
+    const cell = document.createElement('div'); cell.textContent = label; head.appendChild(cell);
+  });
+  list.appendChild(head);
+  data.contacts.forEach(contact => {
+    const row = document.createElement('button');
+    row.className = 'row' + (isSelected('contact', contact.id) ? ' sel' : '');
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar'; avatar.textContent = initials(contact.name);
+    const identity = document.createElement('div'); identity.className = 'identity';
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = contact.name;
+    const sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = contact.title;
+    const co = document.createElement('div');
+    co.className = 'amt';
+    co.textContent = companyName(data.companies, contact.companyId);
+    const how = document.createElement('div');
+    how.className = 'due';
+    how.textContent = contact.email || contact.phone || '';
+    identity.appendChild(nm);
+    row.appendChild(avatar); row.appendChild(identity); row.appendChild(sub); row.appendChild(co); row.appendChild(how);
+    row.addEventListener('click', () => openDetail('contact', contact.id));
+    list.appendChild(row);
+  });
+  view.appendChild(list);
+}
+
+/* ---------- detail panel ---------- */
+
+function isSelected(type, id){
+  return state.selection && state.selection.type === type && state.selection.id === id;
+}
+
+function openDetail(type, id){
+  state.selection = { type: type, id: id };
+  drawDetail();
+  draw();
+}
+
+function closeDetail(){
+  state.selection = null;
+  $('detail').hidden = true;
+  draw();
+}
+
+function field(label, id, value, opts){
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+  const lab = document.createElement('label');
+  lab.className = 'atlas-label';
+  lab.textContent = label;
+  lab.setAttribute('for', id);
+  wrap.appendChild(lab);
+
+  let input;
+  const options = opts || {};
+  if (options.type === 'textarea'){
+    input = document.createElement('textarea');
+  } else if (options.type === 'select'){
+    input = document.createElement('select');
+    (options.options || []).forEach(option => {
+      const el = document.createElement('option');
+      el.value = option.id;
+      el.textContent = option.title;   // textContent, never innerHTML
+      input.appendChild(el);
+    });
+  } else {
+    input = document.createElement('input');
+    input.type = options.type || 'text';
+  }
+  input.id = id;
+  input.className = 'atlas-input';
+  if (options.placeholder) input.placeholder = options.placeholder;
+  input.value = value == null ? '' : value;
+  wrap.appendChild(input);
+  return wrap;
+}
+
+function drawDetail(){
+  const panel = $('detail');
+  if (!state.selection){ panel.hidden = true; return; }
+  panel.hidden = false;
+
+  const { type, id } = state.selection;
+  const body = $('detailBody');
+  body.textContent = '';
+
+  const data = state.data || { companies: [], stages: [], companyStatuses: [],
+                               contactMethods: [], activityKinds: [], activities: [] };
+  const companyOptions = [{ id: '', title: 'No company' }]
+    .concat(data.companies.map(c => ({ id: c.id, title: c.name })));
+
+  if (type === 'company') drawCompanyForm(body, id, data);
+  if (type === 'contact') drawContactForm(body, id, data, companyOptions);
+  if (type === 'opportunity') drawOpportunityForm(body, id, data, companyOptions);
+  if (type === 'idea') drawIdeaForm(body, id, data);
+}
+
+function findRecord(list, id){
+  return (list || []).find(r => r.id === id) || null;
+}
+
+function formActions(body, opts){
+  const acts = document.createElement('div');
+  acts.className = 'acts';
+  if (opts.onDelete){
+    const del = document.createElement('button');
+    del.className = 'atlas-btn atlas-btn--ghost atlas-btn--danger';
+    del.textContent = 'Delete';
+    del.addEventListener('click', opts.onDelete);
+    acts.appendChild(del);
+  }
+  const sp = document.createElement('div');
+  sp.className = 'sp';
+  acts.appendChild(sp);
+
+  const cancel = document.createElement('button');
+  cancel.className = 'atlas-btn atlas-btn--ghost';
+  cancel.textContent = 'Close';
+  cancel.addEventListener('click', closeDetail);
+  acts.appendChild(cancel);
+
+  const save = document.createElement('button');
+  save.className = 'atlas-btn atlas-btn--primary';
+  save.textContent = 'Save';
+  save.addEventListener('click', opts.onSave);
+  acts.appendChild(save);
+
+  body.appendChild(acts);
+}
+
+/* ---------- ideas ----------
+
+   Ideas are the one record here with no counterparty. They stay out of the
+   pipeline figures until promoted, which is what stops a daydream being
+   counted as revenue. */
+
+function ideaTitleOf(list, id, fallback){
+  const hit = (list || []).find(x => x.id === id);
+  return hit ? hit.title : (fallback || id);
+}
+
+function drawIdeas(view){
+  const data = state.data;
+  const ideas = data.ideas || [];
+
+  if (!ideas.length){
+    view.appendChild(emptyBlock('&#9671;',
+      data.query ? 'No matches' : 'No ideas yet',
+      data.query
+        ? 'Nothing matches that search. Clear it to see everything.'
+        : 'Somewhere to put a business idea or side hustle before it is anything. Costs nothing to write one down.',
+      data.query ? [] : [{ label: 'Capture the first idea', primary: true,
+                          run: () => openDetail('idea', null) }]));
+    return;
+  }
+
+  view.appendChild(introBlock('Before the pipeline', 'Ideas',
+    'Business ideas and side hustles. Promote one and it becomes a real deal.'));
+
+  const list = document.createElement('div');
+  list.className = 'list';
+  const head = document.createElement('div');
+  head.className = 'listHead';
+  ['Idea', 'Next step', 'Effort', 'Status'].forEach(label => {
+    const cell = document.createElement('div'); cell.textContent = label; head.appendChild(cell);
+  });
+  list.appendChild(head);
+
+  ideas.forEach(idea => {
+    const row = document.createElement('button');
+    row.className = 'row' + (isSelected('idea', idea.id) ? ' sel' : '');
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = initials(idea.title);
+
+    const identity = document.createElement('div');
+    identity.className = 'identity';
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = idea.title;
+    identity.appendChild(nm);
+    if (idea.pitch){
+      const pitch = document.createElement('div');
+      pitch.className = 'sub';
+      pitch.textContent = idea.pitch;
+      identity.appendChild(pitch);
+    }
+
+    // The next step is the useful column: an idea with no next step is the one
+    // that has quietly stalled, and it should look like it.
+    const next = document.createElement('div');
+    next.className = 'sub';
+    next.textContent = idea.nextStep || 'No next step';
+    if (!idea.nextStep) next.style.opacity = '0.5';
+
+    const effort = document.createElement('div');
+    effort.className = 'amt';
+    effort.textContent = sizingTitle(idea.effort);
+
+    const status = document.createElement('div');
+    status.className = 'due';
+    status.textContent = idea.isPromoted ? 'In pipeline' : ideaStatusTitle(idea.status);
+
+    row.appendChild(avatar);
+    row.appendChild(identity);
+    row.appendChild(next);
+    row.appendChild(effort);
+    row.appendChild(status);
+    row.addEventListener('click', () => openDetail('idea', idea.id));
+    list.appendChild(row);
+  });
+
+  view.appendChild(list);
+}
+
+function ideaStatusTitle(id){
+  const hit = ((state.data || {}).ideaStatuses || []).find(x => x.id === id);
+  return hit ? hit.title : id;
+}
+
+function sizingTitle(id){
+  const hit = ((state.data || {}).ideaSizings || []).find(x => x.id === id);
+  return hit ? hit.title : '';
+}
+
+function drawIdeaForm(body, id, data){
+  const record = findRecord(data.ideas || [], id) || {};
+  $('detailTitle').textContent = id ? 'Idea' : 'New idea';
+
+  body.appendChild(field('Title', 'iTitle', record.title, { placeholder: 'What is it?' }));
+  body.appendChild(field('Pitch', 'iPitch', record.pitch,
+                         { placeholder: 'One line, how you would say it out loud' }));
+
+  const pair = document.createElement('div');
+  pair.className = 'grid2';
+  pair.appendChild(field('Status', 'iStatus', record.status,
+                         { type: 'select', options: data.ideaStatuses || [] }));
+  pair.appendChild(field('Category', 'iCategory', record.category,
+                         { type: 'select', options: data.ideaCategories || [] }));
+  body.appendChild(pair);
+
+  const sizing = document.createElement('div');
+  sizing.className = 'grid2';
+  sizing.appendChild(field('Effort', 'iEffort', record.effort,
+                           { type: 'select', options: data.ideaSizings || [] }));
+  sizing.appendChild(field('Potential', 'iPotential', record.potential,
+                           { type: 'select', options: data.ideaSizings || [] }));
+  body.appendChild(sizing);
+
+  body.appendChild(field('Next step', 'iNextStep', record.nextStep,
+                         { placeholder: 'The one thing that would move this' }));
+  body.appendChild(field('Notes', 'iNotes', record.notes, { type: 'textarea' }));
+
+  // Selects do not take a value from the markup alone.
+  if (record.status) $('iStatus').value = record.status;
+  if (record.category) $('iCategory').value = record.category;
+  if (record.effort) $('iEffort').value = record.effort;
+  if (record.potential) $('iPotential').value = record.potential;
+
+  if (id && !record.isPromoted){
+    const promote = document.createElement('button');
+    promote.className = 'atlas-btn';
+    promote.style.marginTop = '12px';
+    promote.textContent = 'Promote to opportunity';
+    promote.title = 'Creates a company and a deal from this idea, and keeps the idea linked to it';
+    promote.addEventListener('click', () => {
+      setStatus('Promoting…', 'busy');
+      send('promoteIdea', { id: id });
+    });
+    body.appendChild(promote);
+
+    const note = document.createElement('div');
+    note.className = 'hint';
+    note.textContent = 'Creates a company and a deal in the pipeline. The idea stays here, linked.';
+    body.appendChild(note);
+  }
+
+  if (id && record.isPromoted){
+    const note = document.createElement('div');
+    note.className = 'hint';
+    note.style.marginTop = '12px';
+    note.textContent = 'This one is in the pipeline. Find it under Pipeline or Table.';
+    body.appendChild(note);
+  }
+
+  formActions(body, {
+    onSave: () => {
+      setStatus('Saving…', 'busy');
+      send('saveIdea', {
+        id: id || '',
+        title: $('iTitle').value,
+        pitch: $('iPitch').value,
+        status: $('iStatus').value,
+        category: $('iCategory').value,
+        effort: $('iEffort').value,
+        potential: $('iPotential').value,
+        nextStep: $('iNextStep').value,
+        notes: $('iNotes').value
+      });
+    },
+    onDelete: id ? () => askDelete('idea', id, record.title) : null
+  });
+}
+
+function drawCompanyForm(body, id, data){
+  const record = findRecord(data.companies, id) || {};
+  $('detailTitle').textContent = id ? 'Company' : 'New company';
+
+  body.appendChild(field('Name', 'fName', record.name, { placeholder: 'Who are they?' }));
+  const pair = document.createElement('div');
+  pair.className = 'grid2';
+  pair.appendChild(field('Industry', 'fIndustry', record.industry));
+  pair.appendChild(field('Status', 'fStatus', record.status,
+                         { type: 'select', options: data.companyStatuses }));
+  body.appendChild(pair);
+  body.appendChild(field('Website', 'fWebsite', record.website));
+  body.appendChild(field('Phone', 'fPhone', record.phone));
+  body.appendChild(field('Address', 'fAddress', record.address));
+  body.appendChild(field('Notes', 'fNotes', record.notes, { type: 'textarea' }));
+  if (record.status) $('fStatus').value = record.status;
+
+  formActions(body, {
+    onSave: () => {
+      setStatus('Saving…', 'busy');
+      send('saveCompany', {
+        id: id || '',
+        name: $('fName').value,
+        industry: $('fIndustry').value,
+        status: $('fStatus').value,
+        website: $('fWebsite').value,
+        phone: $('fPhone').value,
+        address: $('fAddress').value,
+        notes: $('fNotes').value
+      });
+    },
+    onDelete: id ? () => askDelete('company', id, record.name) : null
+  });
+
+  if (id) appendActivity(body, { companyId: id });
+}
+
+function drawContactForm(body, id, data, companyOptions){
+  const record = findRecord(data.contacts, id) || {};
+  $('detailTitle').textContent = id ? 'Contact' : 'New contact';
+
+  body.appendChild(field('Name', 'fName', record.name, { placeholder: 'Who is it?' }));
+  body.appendChild(field('Company', 'fCompany', record.companyId,
+                         { type: 'select', options: companyOptions }));
+  const pair = document.createElement('div');
+  pair.className = 'grid2';
+  pair.appendChild(field('Role', 'fTitle', record.title));
+  pair.appendChild(field('Prefers', 'fMethod', record.preferredContact,
+                         { type: 'select', options: data.contactMethods }));
+  body.appendChild(pair);
+  body.appendChild(field('Email', 'fEmail', record.email));
+  body.appendChild(field('Phone', 'fPhone', record.phone));
+  body.appendChild(field('Notes', 'fNotes', record.notes, { type: 'textarea' }));
+  $('fCompany').value = record.companyId || '';
+  if (record.preferredContact) $('fMethod').value = record.preferredContact;
+
+  formActions(body, {
+    onSave: () => {
+      setStatus('Saving…', 'busy');
+      send('saveContact', {
+        id: id || '',
+        name: $('fName').value,
+        companyId: $('fCompany').value,
+        title: $('fTitle').value,
+        preferredContact: $('fMethod').value,
+        email: $('fEmail').value,
+        phone: $('fPhone').value,
+        notes: $('fNotes').value
+      });
+    },
+    onDelete: id ? () => askDelete('contact', id, record.name) : null
+  });
+
+  if (id) appendActivity(body, { contactId: id });
+}
+
+function drawOpportunityForm(body, id, data, companyOptions){
+  const record = findRecord(data.opportunities, id) || {};
+  $('detailTitle').textContent = id ? 'Opportunity' : 'New opportunity';
+
+  body.appendChild(field('Title', 'fTitle', record.title, { placeholder: 'What is the work?' }));
+  body.appendChild(field('Company', 'fCompany', record.companyId,
+                         { type: 'select', options: companyOptions }));
+  const pair = document.createElement('div');
+  pair.className = 'grid2';
+  pair.appendChild(field('Value', 'fValue',
+                         record.valueCents ? (record.valueCents / 100).toFixed(2) : '',
+                         { placeholder: '0.00' }));
+  pair.appendChild(field('Stage', 'fStage', record.stage,
+                         { type: 'select', options: data.stages }));
+  body.appendChild(pair);
+  const pair2 = document.createElement('div');
+  pair2.className = 'grid2';
+  pair2.appendChild(field('Probability %', 'fProb', record.probability == null ? '' : record.probability,
+                          { type: 'number' }));
+  pair2.appendChild(field('Follow up', 'fDue', toDateInput(record.nextFollowUpAt), { type: 'date' }));
+  body.appendChild(pair2);
+  body.appendChild(field('ATLAS project path', 'fProject', record.projectPath,
+                         { placeholder: 'Optional' }));
+  body.appendChild(field('Notes', 'fNotes', record.notes, { type: 'textarea' }));
+  $('fCompany').value = record.companyId || '';
+  if (record.stage) $('fStage').value = record.stage;
+
+  formActions(body, {
+    onSave: () => {
+      setStatus('Saving…', 'busy');
+      const due = parseDateInput($('fDue').value);
+      const payload = {
+        id: id || '',
+        title: $('fTitle').value,
+        companyId: $('fCompany').value,
+        valueCents: parseMoney($('fValue').value),
+        stage: $('fStage').value,
+        probability: Math.round(Number($('fProb').value) || 0),
+        projectPath: $('fProject').value,
+        notes: $('fNotes').value
+      };
+      if (due) payload.nextFollowUpAt = due;
+      send('saveOpportunity', payload);
+    },
+    onDelete: id ? () => askDelete('opportunity', id, record.title) : null
+  });
+
+  if (id) appendActivity(body, { opportunityId: id });
+}
+
+/* The activity feed and composer that hang off a saved record. */
+function appendActivity(body, link){
+  const data = state.data;
+  const wrap = section('Activity');
+  const key = link.companyId ? 'companyId' : (link.contactId ? 'contactId' : 'opportunityId');
+  const value = link[key];
+  const items = (data.activities || []).filter(a => a[key] === value);
+
+  const compose = document.createElement('div');
+  compose.className = 'compose';
+  const kind = document.createElement('select');
+  kind.className = 'atlas-input';
+  kind.id = 'aKind';
+  (data.activityKinds || []).filter(k => k.id !== 'statusChange').forEach(option => {
+    const el = document.createElement('option');
+    el.value = option.id;
+    el.textContent = option.title;
+    kind.appendChild(el);
+  });
+  const summary = document.createElement('input');
+  summary.className = 'atlas-input';
+  summary.id = 'aSummary';
+  summary.placeholder = 'What happened?';
+  const add = document.createElement('button');
+  add.className = 'atlas-btn';
+  add.textContent = 'Log';
+  const submit = () => {
+    if (!summary.value.trim()) return;
+    setStatus('Saving…', 'busy');
+    send('logActivity', Object.assign({ kind: kind.value, summary: summary.value }, link));
+    summary.value = '';
+  };
+  add.addEventListener('click', submit);
+  summary.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  compose.appendChild(kind); compose.appendChild(summary); compose.appendChild(add);
+  wrap.appendChild(compose);
+
+  if (!items.length){
+    const none = document.createElement('div');
+    none.className = 'atlas-empty atlas-empty--inline';
+    none.innerHTML = '<div class="atlas-empty__body">No history on this record yet.</div>';
+    wrap.appendChild(none);
+  } else {
+    const feed = document.createElement('div');
+    feed.className = 'feed';
+    items.slice(0, 30).forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'item';
+      const when = document.createElement('div');
+      when.className = 'when';
+      when.textContent = relativeDay(item.occurredAt);
+      const what = document.createElement('div');
+      what.className = 'what';
+      what.textContent = item.summary;
+      row.appendChild(when); row.appendChild(what);
+      feed.appendChild(row);
+    });
+    wrap.appendChild(feed);
+  }
+  body.appendChild(wrap);
+}
+
+/* ---------- delete confirmation ---------- */
+
+/* Nothing is ever deleted on the first click. For a company the app answers
+   with what else would go, and that lands in `confirmDelete` below. */
+function askDelete(type, id, label){
+  state.pendingDelete = { type: type, id: id, label: label || '' };
+  if (type === 'company'){
+    // Ask the app first: it knows what hangs off this record.
+    send('deleteCompany', { id: id, cascade: false });
+    return;
+  }
+  showConfirm('Delete this ' + type + '?',
+              (label ? '“' + label + '”' : 'This record') + ' will be removed. This cannot be undone.',
+              []);
+}
+
+function showConfirm(title, message, bullets){
+  const sheet = $('confirm');
+  sheet.textContent = '';
+
+  const heading = document.createElement('h3');
+  heading.className = 'atlas-sheet__title';
+  heading.textContent = title;
+  sheet.appendChild(heading);
+
+  const p = document.createElement('p');
+  p.textContent = message;
+  sheet.appendChild(p);
+
+  if (bullets && bullets.length){
+    const ul = document.createElement('ul');
+    bullets.forEach(text => {
+      const li = document.createElement('li');
+      li.textContent = text;
+      ul.appendChild(li);
+    });
+    sheet.appendChild(ul);
+  }
+
+  const acts = document.createElement('div');
+  acts.className = 'acts';
+  const sp = document.createElement('div');
+  sp.className = 'sp';
+  const cancel = document.createElement('button');
+  cancel.className = 'atlas-btn atlas-btn--ghost';
+  cancel.textContent = 'Keep it';
+  cancel.addEventListener('click', dismissConfirm);
+  const go = document.createElement('button');
+  go.className = 'atlas-btn atlas-btn--danger';
+  go.textContent = 'Delete';
+  go.addEventListener('click', confirmDelete);
+  acts.appendChild(sp); acts.appendChild(cancel); acts.appendChild(go);
+  sheet.appendChild(acts);
+
+  $('veil').classList.add('on');
+  setTimeout(() => cancel.focus(), 40);
+}
+
+function dismissConfirm(){
+  $('veil').classList.remove('on');
+  state.pendingDelete = null;
+}
+
+function confirmDelete(){
+  const pending = state.pendingDelete;
+  if (!pending) return dismissConfirm();
+  setStatus('Deleting…', 'busy');
+  if (pending.type === 'company') send('deleteCompany', { id: pending.id, cascade: true });
+  if (pending.type === 'contact') send('deleteContact', { id: pending.id });
+  if (pending.type === 'opportunity') send('deleteOpportunity', { id: pending.id });
+  if (pending.type === 'idea') send('deleteIdea', { id: pending.id });
+  dismissConfirm();
+  state.selection = null;
+  $('detail').hidden = true;
+}
+
+/* ---------- the app calls these ---------- */
+
+window.atlasCRM = {
+  render(json){
+    try {
+      state.data = JSON.parse(json);
+      state.loading = false;
+      $('context').textContent = state.data.summary.companyCount + ' companies · ' +
+        state.data.summary.openCount + ' open';
+      $('searchCount').textContent = state.data.query ? 'filtered' : '';
+      draw();
+      drawDetail();
+      if (!$('status').className) setStatus('Local & encrypted', '');
+    } catch (e) {
+      setStatus('Could not read the CRM data.', 'bad');
+    }
+  },
+  saved(json){
+    let message = 'Saved';
+    try { message = JSON.parse(json).message || message; } catch (e) {}
+    setStatus(message, 'ok');
+    // Let the confirmation read, then fall back to the resting line.
+    clearTimeout(window.__crmStatusTimer);
+    window.__crmStatusTimer = setTimeout(() => setStatus('Local & encrypted', ''), 2200);
+  },
+  error(json){
+    let message = 'Something went wrong.';
+    let fatal = false;
+    try {
+      const payload = JSON.parse(json);
+      message = payload.message || message;
+      fatal = payload.fatal === true;
+    } catch (e) {}
+    setStatus(message, 'bad');
+    // A fatal error means no data is coming. Say so in the body of the page
+    // rather than leaving the loading spinner up forever with a red line
+    // underneath it.
+    if (fatal){
+      state.loading = false;
+      state.fatal = message;
+      render();
+    }
+  },
+  /* A company with dependents: say exactly what would go before asking again. */
+  confirmDelete(json){
+    let payload = {};
+    try { payload = JSON.parse(json); } catch (e) { return; }
+    const bullets = [];
+    if (payload.opportunities) bullets.push(payload.opportunities +
+      (payload.opportunities === 1 ? ' opportunity' : ' opportunities') + ' will be deleted');
+    if (payload.activities) bullets.push(payload.activities +
+      (payload.activities === 1 ? ' activity' : ' activities') + ' will be deleted');
+    if (payload.contacts) bullets.push(payload.contacts +
+      (payload.contacts === 1
+        ? ' contact keeps its record but loses the link'
+        : ' contacts keep their records but lose the link'));
+    state.pendingDelete = { type: 'company', id: payload.id };
+    setStatus('Waiting for confirmation', '');
+    showConfirm('Delete this company?', 'This cannot be undone.', bullets);
+  }
+};
+
+/* ---------- wiring ---------- */
+
+function selectTab(name){
+  document.querySelectorAll('#tabs button').forEach(b => {
+    b.classList.toggle('on', b.dataset.tab === name);
+  });
+  state.tab = name;
+  draw();
+}
+
+document.querySelectorAll('#tabs button').forEach(button => {
+  button.addEventListener('click', () => selectTab(button.dataset.tab));
+});
+
+let searchTimer = null;
+$('searchInput').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  const value = e.target.value;
+  searchTimer = setTimeout(() => send('search', { query: value }), 180);
+});
+
+$('newIdea').addEventListener('click', () => { selectTab('ideas'); openDetail('idea', null); });
+$('newCompany').addEventListener('click', () => openDetail('company', null));
+$('newOpportunity').addEventListener('click', () => openDetail('opportunity', null));
+$('closeDetail').addEventListener('click', closeDetail);
+$('veil').addEventListener('click', e => { if (e.target === $('veil')) dismissConfirm(); });
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape'){
+    if ($('veil').classList.contains('on')) return dismissConfirm();
+    if (!$('detail').hidden) return closeDetail();
+  }
+});
+
+draw();
+send('load');
+</script>
+</body>
+</html>

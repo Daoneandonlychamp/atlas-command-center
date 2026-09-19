@@ -1,0 +1,527 @@
+/* ATLAS shared components.
+ *
+ * Loaded with atlas-theme.css as one injected <style> (see AtlasResources).
+ *
+ * Every class here is prefixed `atlas-`, and pages adopt a component by adding
+ * the prefixed class next to whatever class they already had:
+ *
+ *     <div class="bar atlas-toolbar">
+ *
+ * That matters more than it looks. `.bar` is a page toolbar in calendar,
+ * kanban and canvas — but in chat.html it is the 2px accent stripe down the
+ * side of a message. Prefixing keeps the shared toolbar from ever landing on
+ * that stripe, and keeps existing querySelector calls working untouched.
+ */
+
+/* ============================================================
+   Page toolbar
+   Standard order: identity -> context/status -> spacer -> search -> action
+   ============================================================ */
+
+.atlas-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--edge-soft);
+  background: rgba(11, 14, 19, 0.92);
+}
+
+/* Identity: what page am I on. */
+.atlas-toolbar__id {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+}
+
+.atlas-toolbar__title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: var(--ls-tight);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Context/status: the qualifier that changes as you navigate. */
+.atlas-toolbar__context {
+  font-size: var(--fs-meta);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.atlas-toolbar__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--edge-soft);
+  border-radius: 999px;
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-micro);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.atlas-toolbar__status .dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.atlas-toolbar__status.is-ok    { color: var(--ok); border-color: rgba(52, 199, 89, 0.32); }
+.atlas-toolbar__status.is-warn  { color: var(--warn); border-color: rgba(255, 159, 10, 0.32); }
+.atlas-toolbar__status.is-error { color: var(--err); border-color: rgba(255, 59, 48, 0.42); }
+
+/* ============================================================
+   Buttons
+   ============================================================ */
+
+.atlas-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border: 1px solid var(--edge-soft);
+  border-radius: var(--r-md);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+  box-shadow: 0 1px 0 rgba(255,255,255,.035) inset;
+  transition: transform var(--dur-fast) ease,
+              background var(--dur-fast) ease,
+              border-color var(--dur-fast) ease,
+              color var(--dur-fast) ease;
+}
+
+.atlas-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.atlas-btn:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  transform: translateY(1px) scale(.985);
+}
+
+.atlas-btn:disabled {
+  opacity: 0.4;
+  background: none;
+  border-color: var(--edge-soft);
+}
+
+/* The one action a page most wants you to take. */
+.atlas-btn--primary {
+  background: var(--text);
+  border-color: var(--edge);
+  color: var(--bg);
+  font-weight: 600;
+  box-shadow: 0 1px 0 rgba(255,255,255,.22) inset, 0 7px 20px rgba(0,0,0,.16);
+}
+
+.atlas-btn--primary:hover:not(:disabled) {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+  transform:translateY(-1px);
+}
+
+.atlas-btn--primary:active:not(:disabled) { background: var(--text); transform:translateY(0) scale(.985); }
+
+.atlas-btn--ghost { border-color: transparent; }
+.atlas-btn--ghost:hover:not(:disabled) { border-color: var(--edge-soft); }
+
+.atlas-btn--danger { color: var(--err); }
+.atlas-btn--danger:hover:not(:disabled) {
+  background: rgba(255, 59, 48, 0.12);
+  border-color: rgba(255, 59, 48, 0.35);
+  color: var(--err);
+}
+
+/* Square control for a glyph. Sized to stay comfortably clickable. */
+.atlas-iconbtn {
+  display: grid;
+  place-items: center;
+  width: 27px; height: 27px;
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+.atlas-iconbtn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+}
+
+.atlas-iconbtn:active:not(:disabled) { background: rgba(255, 255, 255, 0.11); }
+
+/* ============================================================
+   Segmented control
+   ============================================================ */
+
+.atlas-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--edge-soft);
+  border-radius: 7px;
+}
+
+.atlas-seg button {
+  padding: 5px 12px;
+  border-radius: 5px;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+.atlas-seg button:hover:not(.on):not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.atlas-seg button.on {
+  background: rgba(255,255,255,.105);
+  box-shadow:0 1px 0 rgba(255,255,255,.06) inset;
+  color: var(--text);
+}
+
+/* ============================================================
+   Input field
+   ============================================================ */
+
+.atlas-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 11px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--edge-soft);
+  border-radius: 7px;
+  transition: border-color var(--dur-fast) ease, background var(--dur-fast) ease;
+  min-width: 0;
+}
+
+.atlas-field:hover { border-color: rgba(255, 255, 255, 0.12); }
+
+/* The shell carries focus for the input inside it, so the ring surrounds the
+   whole control rather than just the bare text box. */
+.atlas-field:focus-within {
+  border-color: var(--cyan-dim);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 0 2px rgba(63, 208, 255, 0.28);
+}
+
+.atlas-field input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-size: var(--fs-body);
+}
+
+.atlas-field input::placeholder { color: var(--faint); }
+
+.atlas-field input:focus-visible { box-shadow: none; }
+
+/* Trailing affordance: a shortcut hint or syntax legend. */
+.atlas-field__hint {
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-micro);
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* Standalone inputs inside sheets. */
+.atlas-input {
+  width: 100%;
+  padding: 7px 9px;
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--edge-soft);
+  border-radius: 5px;
+  outline: none;
+  transition: border-color var(--dur-fast) ease;
+}
+
+.atlas-input:hover { border-color: rgba(255, 255, 255, 0.12); }
+
+.atlas-label {
+  display: block;
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 11px 0 4px;
+}
+
+/* ============================================================
+   Panel — the HUD's instrument surface
+   ============================================================ */
+
+.atlas-panel {
+  position: relative;
+  background:
+    linear-gradient(158deg,
+      rgba(255, 255, 255, 0.055) 0%,
+      rgba(255, 255, 255, 0.018) 34%,
+      rgba(255, 255, 255, 0) 62%),
+    var(--panel);
+  border: 1px solid var(--edge-soft);
+  border-top-color: rgba(255, 255, 255, 0.10);
+  border-radius: var(--r-sm);
+  padding: 11px 12px;
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset,
+              0 10px 26px rgba(0, 0, 0, 0.38);
+}
+
+/* Clipped corner brackets — the detail that makes a box read as a HUD. */
+.atlas-panel::before,
+.atlas-panel::after {
+  content: "";
+  position: absolute;
+  width: 13px; height: 13px;
+  border: 1px solid var(--gold-dim);
+  pointer-events: none;
+}
+
+.atlas-panel::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+.atlas-panel::after  { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+/* Panel caption. */
+.atlas-cap {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 9px;
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--gold-dim);
+}
+
+.atlas-cap em {
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: var(--ls-micro);
+  color: var(--faint);
+}
+
+/* ============================================================
+   Sheet + veil
+   ============================================================ */
+
+.atlas-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.55);
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.atlas-veil.on { display: flex; }
+
+.atlas-sheet {
+  background: var(--panel-hi);
+  border: 1px solid var(--edge-soft);
+  border-radius: 10px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+.atlas-sheet__title {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--gold-dim);
+}
+
+/* ============================================================
+   Menu
+   ============================================================ */
+
+.atlas-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 186px;
+  padding: 5px;
+  border-radius: var(--r-lg);
+  background: rgba(21, 26, 35, 0.98);
+  border: 1px solid var(--edge-soft);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+.atlas-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 5px;
+  font-size: var(--fs-body);
+  color: var(--text);
+  transition: background var(--dur-fast) ease;
+}
+
+.atlas-menu button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.07); }
+.atlas-menu button:active:not(:disabled) { background: rgba(255, 255, 255, 0.11); }
+.atlas-menu button.danger { color: var(--err); }
+.atlas-menu button.danger:hover:not(:disabled) { background: rgba(255, 59, 48, 0.12); }
+
+.atlas-menu__sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--edge-soft);
+}
+
+/* ============================================================
+   Empty state
+   ============================================================ */
+
+/* The old empty states were a single tracked-out uppercase line, which read
+   as a system fault rather than an invitation. This is a composed block:
+   a quiet title, one line of orientation, and — where the page has something
+   real to offer — actions. */
+.atlas-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 22px;
+  text-align: center;
+}
+
+.atlas-empty__mark {
+  width: 34px; height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--edge-soft);
+  border-radius: var(--r-lg);
+  color: var(--gold-dim);
+  font-size: 15px;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.atlas-empty__title {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.atlas-empty__body {
+  max-width: 34ch;
+  font-size: var(--fs-meta);
+  line-height: 1.55;
+  color: var(--faint);
+}
+
+.atlas-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+/* Compact variant for narrow rails and single day cells. */
+.atlas-empty--inline {
+  padding: 16px 12px;
+  gap: 6px;
+}
+
+.atlas-empty--inline .atlas-empty__mark { display: none; }
+
+/* ============================================================
+   Toast
+   ============================================================ */
+
+.atlas-toast {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 8px 15px;
+  border-radius: 7px;
+  background: rgba(21, 26, 35, 0.97);
+  border: 1px solid var(--edge-soft);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-size: var(--fs-meta);
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur) ease;
+}
+
+.atlas-toast.on { opacity: 1; }
+.atlas-toast.bad { border-color: var(--err); color: var(--err); }
+
+/* ============================================================
+   Clickable affordance
+   ============================================================ */
+
+.atlas-tap {
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  transition: background var(--dur-fast) ease;
+}
+
+.atlas-tap:hover { background: rgba(255, 255, 255, 0.075); }
+.atlas-tap:active { background: rgba(255, 255, 255, 0.12); }
+
+/* ============================================================
+   Light appearance
+   ============================================================
+
+   This block has to come last. Every rule in it has the same specificity as
+   the component rule it overrides, so ordering is the only thing deciding the
+   winner — when it sat in the middle of the file the overrides for the sheet,
+   the menu and the toast were all silently dead, and those three kept painting
+   themselves near-black on a cream ground.
+   ============================================================ */
+
+@media (prefers-color-scheme: light) {
+  .atlas-toolbar { background: rgba(244,240,233,.90); }
+  .atlas-btn { box-shadow:0 1px 0 rgba(255,255,255,.75) inset; }
+  .atlas-btn:hover:not(:disabled) { background:rgba(17,18,21,.055); }
+  .atlas-btn--primary,
+  .atlas-btn--primary:hover:not(:disabled) { background:#17181b;color:#fff;border-color:#17181b; }
+  .atlas-seg { background:rgba(17,18,21,.045); }
+  .atlas-seg button.on { background:#fbf8f2;box-shadow:0 1px 4px rgba(20,21,24,.10); }
+  .atlas-field { background:rgba(17,18,21,.035); }
+  .atlas-input { background:rgba(17,18,21,.035); }
+  .atlas-sheet { box-shadow:0 24px 60px rgba(35,36,39,.16); }
+  /* Floating surfaces were the two left painting themselves near-black, which
+     on a light ground reads as a hole rather than a popover. */
+  .atlas-menu { background:rgba(252,249,243,.99); box-shadow:0 16px 40px rgba(35,36,39,.18); }
+  .atlas-menu button:hover:not(:disabled) { background:rgba(29,27,24,.06); }
+  .atlas-menu button:active:not(:disabled) { background:rgba(29,27,24,.10); }
+  .atlas-toast { background:rgba(252,249,243,.99); box-shadow:0 10px 30px rgba(35,36,39,.18); }
+  .atlas-tap:hover { background:rgba(29,27,24,.06); }
+  .atlas-tap:active { background:rgba(29,27,24,.10); }
+}

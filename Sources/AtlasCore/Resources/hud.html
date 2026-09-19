@@ -1,0 +1,979 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ATLAS HUD</title>
+<style>
+  /* Shared tokens, reset, controls and components arrive from atlas-theme.css /
+     atlas-components.css, injected ahead of this block. Only the HUD's own
+     instruments live here. */
+  :root {
+    /* The HUD tints its hairlines gold rather than white. */
+    --edge-soft: rgba(212, 176, 89, 0.10);
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse 90% 70% at 50% 46%, rgba(63,208,255,0.07), transparent 70%),
+      radial-gradient(ellipse 60% 50% at 50% 100%, rgba(212,176,89,0.05), transparent 70%),
+      var(--bg);
+    overflow-y: auto;
+    overflow-x: hidden;
+    user-select: none;
+  }
+
+  /* Faint grid, so the empty areas read as instrument panel rather than void. */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    z-index: 0;
+    background-image:
+      linear-gradient(rgba(63,208,255,0.030) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(63,208,255,0.030) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse 75% 65% at 50% 50%, #000 30%, transparent 78%);
+    pointer-events: none;
+  }
+
+  /* Grid children default to min-width/min-height:auto, so an oversized
+     canvas in the middle column shoves the side columns off screen. */
+  #grid > * { min-width: 0; min-height: 0; }
+
+  #grid {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    /* min-height, not height: the grid still fills the viewport, but a row
+       that outgrows it extends the page instead of clipping. */
+    min-height: 100vh;
+    padding: 14px;
+    gap: 12px;
+    grid-template-columns: 268px 1fr 268px;
+    grid-template-rows: 30px minmax(320px, 1fr) minmax(214px, auto);
+    grid-template-areas:
+      "topbar topbar topbar"
+      "left   core   right"
+      "cron   cron   spend";
+  }
+
+  /* Panel chrome is shared (.atlas-panel); the HUD adds the blur behind it. */
+  .panel { backdrop-filter: blur(14px) saturate(120%); }
+
+  #left .panel, #right .panel { flex: 1; }
+
+  /* ---------- top bar ---------- */
+
+  /* Identity, then mode, then the live readout on the right. Tracking is
+     dialled back so the row reads as a status line rather than a banner. */
+  #topbar {
+    grid-area: topbar;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 4px;
+    font-size: var(--fs-label);
+    letter-spacing: var(--ls-caps);
+    color: var(--muted);
+  }
+  #topbar .brand {
+    color: var(--gold);
+    font-weight: 700;
+    letter-spacing: 1.6px;
+    font-size: var(--fs-meta);
+  }
+  #topbar .spacer { flex: 1; }
+  #topbar .stamp { color: var(--faint); letter-spacing: var(--ls-micro); }
+  #topbar .pill {
+    border: 1px solid var(--edge);
+    border-radius: 999px;
+    padding: 2px 9px;
+    font-size: var(--fs-micro);
+    letter-spacing: var(--ls-micro);
+    color: var(--cyan-dim);
+  }
+  #topbar .pill.alert { border-color: rgba(255,59,48,0.5); color: var(--err); }
+  #topbar .clock {
+    font-size: 14px;
+    color: var(--text);
+    letter-spacing: 0.8px;
+    font-variant-numeric: tabular-nums;
+  }
+  #topbar .clock .sec { font-size: var(--fs-micro); color: var(--cyan); margin-left: 2px; }
+  #topbar #greeting { color: var(--gold); letter-spacing: var(--ls-caps); }
+  #topbar #dateline { color: var(--muted); letter-spacing: var(--ls-micro); }
+  #topbar .sep { color: var(--faint); }
+
+  /* ---------- core ---------- */
+
+  /* The particle field is a backdrop for the whole HUD, behind every panel.
+     pointer-events:none keeps its OrbitControls from stealing drags. */
+  /* Confined to the core cell — the only area no panel covers. Keeps the
+     field out from behind the panels and shrinks the render target, which is
+     also the cheapest GPU saving available. */
+  #canvas-container {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: auto;
+    cursor: grab;
+    overflow: hidden;
+    mask-image: radial-gradient(circle at 50% 50%, #000 62%, transparent 88%);
+  }
+  #canvas-container:active { cursor: grabbing; }
+  /* The renderer sizes its own canvas from the container. Forcing 100% here
+     would stretch that correctly-sized buffer and undo the fix. */
+  #canvas-container canvas { display: block; }
+
+  /* Everything the pen expects but we do not show. Kept in the DOM so its
+     code finds what it looks for and needs no edits. */
+  #fieldChrome { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+
+  #core {
+    grid-area: core;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* ---------- left: vitals ---------- */
+
+  #left { grid-area: left; display: flex; flex-direction: column; gap: 12px; }
+  #left .panel { display: flex; flex-direction: column; }
+
+  .meter { margin-bottom: 11px; }
+  .meter:last-child { margin-bottom: 0; }
+  .meter .row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: var(--fs-label); letter-spacing: var(--ls-micro); color: var(--muted);
+    margin-bottom: 5px;
+  }
+  .meter .val { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 15px; color: var(--text); }
+  .meter .val small { font-size: var(--fs-micro); color: var(--muted); margin-left: 3px; }
+  .track {
+    height: 3px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--cyan), rgba(63,208,255,0.55));
+    box-shadow: 0 0 9px rgba(63,208,255,0.55);
+    transition: width 0.55s ease;
+  }
+  .fill.warn { background: linear-gradient(90deg, var(--warn), rgba(255,159,10,0.5)); box-shadow: 0 0 9px rgba(255,159,10,0.5); }
+  .fill.crit { background: linear-gradient(90deg, var(--err), rgba(255,59,48,0.5));  box-shadow: 0 0 9px rgba(255,59,48,0.5); }
+
+  #services { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  #services::-webkit-scrollbar { width: 0; }
+
+  .vitals-foot {
+    padding-top: 9px;
+    margin-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.07);
+  }
+
+  .kv { display: flex; justify-content: space-between; font-size: var(--fs-label); padding: 3px 0; color: var(--muted); letter-spacing: var(--ls-micro); }
+  .kv span:last-child { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
+
+  /* ---------- right: brief ---------- */
+
+  #right { grid-area: right; display: flex; flex-direction: column; gap: 12px; }
+  #right .panel { overflow-y: auto; }
+  #right .panel::-webkit-scrollbar { width: 0; }
+
+  .event { display: flex; gap: 9px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .event:last-child { border-bottom: 0; }
+  .event .t { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: var(--fs-micro); color: var(--cyan); min-width: 50px; }
+  .event .n { font-size: var(--fs-meta); color: var(--text); line-height: 1.35; }
+
+  /* A one-line status inside a panel, not a full empty state — the shared
+     .atlas-empty block is far too tall for a 268px rail. */
+  .empty { font-size: var(--fs-label); color: var(--faint); letter-spacing: var(--ls-micro); line-height: 1.6; padding: 6px 0; }
+
+  /* Local deltas only; the button itself is .atlas-btn--primary. */
+  .act { font-size: var(--fs-micro); letter-spacing: var(--ls-caps); font-weight: 700; margin-top: 6px; }
+  .act.busy { animation: pulse 1.4s ease-in-out infinite; }
+
+  .proj { display: flex; align-items: baseline; gap: 7px; padding: 4px 0; font-size: var(--fs-label); }
+  .proj .nm {
+    font-family: var(--mono); color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+  }
+  .proj .br { font-family: var(--mono); font-size: var(--fs-micro); color: var(--cyan-dim); }
+  .proj .ch { font-family: var(--mono); font-size: var(--fs-micro); color: var(--warn); }
+
+  .note { padding: 4px 0; font-size: var(--fs-label); color: var(--text);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .note em { font-style: normal; color: var(--faint); font-size: var(--fs-micro); }
+
+  .svc { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; font-size: var(--fs-label); }
+  .svc .dot { width: 5px; height: 5px; border-radius: 50%; flex: none; box-shadow: 0 0 6px currentColor; align-self: center; }
+  /* The name never drops below ~9 characters: a service you cannot identify is
+     worse than a status you cannot finish reading. */
+  .svc .nm {
+    color: var(--text);
+    flex: 1 1 auto; min-width: 9ch;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* So the status is what gives way, and the column stays right-aligned. */
+  .svc .st {
+    font-family: var(--mono); font-size: var(--fs-micro); color: var(--muted);
+    flex: 0 1 auto; min-width: 0; text-align: right;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ---------- cron ---------- */
+
+  #cron { grid-area: cron; display: flex; flex-direction: column; }
+  /* The job grid takes the panel's slack and scrolls on its own, so a seventh
+     job is reachable rather than cut off at the panel edge. */
+  #jobs {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 8px;
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    align-content: start;
+    padding-right: 4px;
+  }
+  #jobs::-webkit-scrollbar { width: 6px; }
+  #jobs::-webkit-scrollbar-track { background: transparent; }
+  #jobs::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+  #jobs::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+
+  .job {
+    border: 1px solid rgba(255,255,255,0.06);
+    border-left: 2px solid var(--st);
+    border-radius: 2px;
+    padding: 7px 9px;
+    background: rgba(255,255,255,0.017);
+  }
+  .job .n {
+    font-family: var(--mono); font-size: var(--fs-label); color: var(--text);
+    display: flex; align-items: center; gap: 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .job .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--st); box-shadow: 0 0 7px var(--st); flex: none; }
+  .job .s { font-family: var(--mono); font-size: var(--fs-micro); color: var(--gold-dim); margin: 3px 0 5px; }
+  .job .next { font-size: var(--fs-micro); color: var(--muted); letter-spacing: var(--ls-micro); }
+  .job .strip { display: flex; gap: 2px; margin-top: 5px; }
+  .job .strip i { width: 3px; height: 10px; border-radius: 1px; background: var(--faint); }
+  .job .strip i.ok { background: rgba(52,199,89,0.75); }
+  .job .strip i.no { background: rgba(255,59,48,0.85); }
+  .job .badge {
+    font-size: var(--fs-micro); letter-spacing: var(--ls-micro); color: var(--err);
+    border: 1px solid rgba(255,59,48,0.4); border-radius: 2px; padding: 0 4px;
+  }
+
+  /* ---------- spend ---------- */
+
+  #spend { grid-area: spend; display: flex; flex-direction: column; }
+
+  .bignum { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 27px; font-weight: 300; color: var(--gold); letter-spacing: -0.5px; line-height: 1.05; }
+  .bignum small { display: block; font-size: var(--fs-micro); color: var(--muted); letter-spacing: var(--ls-caps); font-family: var(--sans); margin-top: 3px; }
+
+  #bars { display: flex; align-items: flex-end; gap: 2px; height: 46px; margin: 9px 0 6px; }
+  #bars i {
+    flex: 1;
+    background: linear-gradient(180deg, var(--gold), rgba(212,176,89,0.25));
+    border-radius: 1px 1px 0 0;
+    min-height: 1px;
+    transition: height 0.5s ease;
+  }
+  #bars i.today { background: linear-gradient(180deg, var(--cyan), rgba(63,208,255,0.3)); }
+
+  .headline { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .headline .kv { flex: 1; min-width: 92px; }
+
+  .detail { margin-top: 7px; }
+  .detail summary {
+    cursor: pointer; list-style: none;
+    font-size: var(--fs-micro); letter-spacing: var(--ls-caps); text-transform: uppercase;
+    color: var(--faint);
+    padding: 3px 0;
+    transition: color var(--dur-fast) ease;
+  }
+  .detail summary::-webkit-details-marker { display: none; }
+  .detail summary::before { content: "\25B8"; display: inline-block; margin-right: 6px; transition: transform var(--dur-fast) ease; }
+  .detail[open] summary::before { transform: rotate(90deg); }
+  .detail summary:hover { color: var(--muted); }
+  .detail__body { padding-top: 3px; }
+
+  .split { display: flex; gap: 14px; }
+  .split > div { min-width: 0; }
+  .split > div:first-child { flex: 0 0 118px; }
+  .split > div:last-child { flex: 1; }
+
+  .disclaimer { font-size: var(--fs-micro); color: var(--faint); letter-spacing: var(--ls-micro); line-height: 1.5; margin-top: 6px; }
+
+  .scanning { color: var(--cyan); animation: pulse 1.3s ease-in-out infinite; }
+
+  .burn { display: flex; gap: 12px; margin-top: 5px; font-size: var(--fs-micro); color: var(--muted); letter-spacing: var(--ls-micro); }
+  .burn b { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 500; color: var(--text); }
+
+  /* Rate-limit windows: the meters that actually constrain the work. */
+  .lim { margin-bottom: 7px; }
+  .lim .row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: var(--fs-label); letter-spacing: var(--ls-micro); color: var(--muted); margin-bottom: 4px;
+  }
+  .lim .row b { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; color: var(--text); letter-spacing: 0; }
+  .lim .row em { font-style: normal; font-size: var(--fs-micro); color: var(--faint); letter-spacing: var(--ls-micro); margin-left: 6px; }
+  .lim .track { height: 4px; }
+  .burn .over { color: var(--warn); }
+  @keyframes pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+</style>
+</head>
+<body>
+
+<!-- The pen writes into these; ATLAS shows none of them. -->
+<div id="fieldChrome" aria-hidden="true">
+  <span id="planet-kicker"></span>
+  <span id="planet-name"></span>
+  <span id="planet-description"></span>
+  <div id="transition-meter"><div id="transition-meter-fill"></div></div>
+  <input type="checkbox" id="auto-cycle">
+  <button data-planet="0"></button>
+  <button data-planet="1"></button>
+  <button data-planet="2"></button>
+  <button data-planet="3"></button>
+</div>
+
+<div id="grid">
+
+  <div id="topbar">
+    <span class="brand">A T L A S</span>
+    <span class="pill" id="modePill">SOVEREIGN · LOCAL</span>
+    <button class="act atlas-btn atlas-btn--primary" id="speakBtn" style="margin:0" onclick="toggleSpeak()" hidden>BRIEF ME</button>
+    <span class="spacer"></span>
+    <span id="alertPill" class="pill alert" hidden></span>
+    <span class="clock mono" id="clock">--:--</span>
+    <span class="sep">·</span>
+    <span id="greeting">STANDING BY</span>
+    <span class="sep">·</span>
+    <span id="dateline"></span>
+    <span class="sep">·</span>
+    <span class="stamp" id="stamp">AWAITING TELEMETRY</span>
+  </div>
+
+  <div id="left">
+    <div class="panel atlas-panel">
+      <div class="cap atlas-cap"><span>SYSTEM VITALS</span><em id="cores"></em></div>
+      <div class="meter">
+        <div class="row"><span>PROCESSOR</span><span class="val" id="cpuVal">—</span></div>
+        <div class="track"><div class="fill" id="cpuBar" style="width:0"></div></div>
+      </div>
+      <div class="meter">
+        <div class="row"><span>MEMORY</span><span class="val" id="memVal">—</span></div>
+        <div class="track"><div class="fill" id="memBar" style="width:0"></div></div>
+      </div>
+      <div class="meter">
+        <div class="row"><span>STORAGE</span><span class="val" id="dskVal">—</span></div>
+        <div class="track"><div class="fill" id="dskBar" style="width:0"></div></div>
+      </div>
+      <div class="cap atlas-cap" style="margin-top:14px"><span>SERVICES</span><em id="svcCount"></em></div>
+      <div id="services"><div class="empty">Checking.</div></div>
+
+      <div class="vitals-foot">
+        <div class="kv"><span>NETWORK</span><span id="network">—</span></div>
+        <div class="kv"><span>BATTERY</span><span id="battery">—</span></div>
+        <div class="kv"><span>THERMAL</span><span id="thermal">—</span></div>
+        <div class="kv"><span>UPTIME</span><span id="uptime">—</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="core">
+    <div id="canvas-container"></div>
+  </div>
+
+  <div id="right">
+    <div class="panel atlas-panel">
+      <div class="cap atlas-cap"><span>TODAY</span><em id="eventCount"></em></div>
+      <div id="events"><div class="empty">Awaiting calendar.</div></div>
+      <div id="nextUp"></div>
+    </div>
+    <div class="panel atlas-panel">
+      <div class="cap atlas-cap"><span>WORKSPACE</span><em id="projCount"></em></div>
+      <div id="projects"><div class="empty">Scanning projects.</div></div>
+      <div class="cap atlas-cap" style="margin-top:11px"><span>RECENT NOTES</span><em id="noteCount"></em></div>
+      <div id="notes"><div class="empty">No notes found.</div></div>
+    </div>
+  </div>
+
+  <div id="cron" class="panel atlas-panel">
+    <div class="cap atlas-cap"><span>SCHEDULED JOBS · HERMES SOVEREIGN</span><em id="cronSummary"></em></div>
+    <div id="jobs"><div class="empty">No scheduled jobs found.</div></div>
+  </div>
+
+  <div id="spend" class="panel atlas-panel">
+    <div class="cap atlas-cap"><span>CLAUDE CODE · 30 DAYS</span><em id="scanState"></em></div>
+    <div id="limits"></div>
+    <div class="headline">
+      <div class="bignum" id="spendTotal">$—</div>
+      <div class="kv"><span>TODAY</span><span id="spendToday">—</span></div>
+    </div>
+    <div class="burn" id="burn"></div>
+    <div id="bars"></div>
+
+    <!-- Token counts and the model split are diagnostic, not glanceable: at a
+         glance what matters is the two rate windows and the spend. A native
+         <details> keeps them one click away without a line of script. -->
+    <details class="detail">
+      <summary>Token detail</summary>
+      <div class="detail__body">
+        <div class="kv"><span>TRANSCRIPTS</span><span id="transcripts">—</span></div>
+        <div class="kv"><span>CACHE READ</span><span id="tokCacheR">—</span></div>
+        <div class="kv"><span>CACHE WRITE</span><span id="tokCacheW">—</span></div>
+        <div class="kv"><span>OUTPUT</span><span id="tokOut">—</span></div>
+        <div class="kv"><span>INPUT</span><span id="tokIn">—</span></div>
+        <div id="models" style="font-size:var(--fs-micro);color:var(--muted);letter-spacing:var(--ls-micro);margin-top:5px;"></div>
+      </div>
+    </details>
+    <div class="disclaimer" id="disclaimer">
+      Equivalent API cost from local transcripts. Not a bill.
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Page errors are otherwise invisible — a WKWebView has no console to read.
+// Route them to the native log so a broken module says so.
+window.addEventListener('error', function (e) {
+  try {
+    // A failed <script>/<link> raises an error event with no message; the
+    // useful detail is the element it fired on.
+    var t = e.target || {};
+    var res = t.src || t.href || '';
+    window.webkit.messageHandlers.atlas.postMessage(
+      'jserror:' + (e.message || ('failed to load ' + (res || t.tagName || 'resource')))
+      + ' @ ' + (e.filename || res || '?') + ':' + (e.lineno || 0));
+  } catch (_) {}
+}, true);
+window.addEventListener('unhandledrejection', function (e) {
+  try {
+    window.webkit.messageHandlers.atlas.postMessage(
+      'jserror:promise ' + ((e.reason && e.reason.message) || e.reason || '?'));
+  } catch (_) {}
+});
+</script>
+
+<script>
+// Frame governor, installed before anything schedules a frame.
+//
+// The field is decoration behind opaque panels, so it does not need 60fps and
+// it does not need to run at all when you are looking at another window. Both
+// are done by wrapping requestAnimationFrame rather than editing the field's
+// code, so the vendored source stays untouched.
+(function () {
+  const raf = window.requestAnimationFrame.bind(window);
+  const minGap = 1000 / 30;   // 30fps is indistinguishable behind panels
+
+  // Callers are queued and released together on one clock. Gating each
+  // callback against a shared timestamp instead lets whichever loop runs
+  // first reset it and starve the others.
+  let queue = [], scheduled = false, last = 0;
+
+  function pump(time) {
+    scheduled = false;
+    // Idle entirely when tab/window is hidden, but keep the queue alive.
+    if (document.hidden || time - last < minGap) {
+      schedule();
+      return;
+    }
+    last = time;
+    const due = queue;
+    queue = [];
+    for (let i = 0; i < due.length; i++) {
+      try { due[i](time); } catch (err) { console.error(err); }
+    }
+  }
+
+  function schedule() {
+    if (scheduled) return;
+    scheduled = true;
+    raf(pump);
+  }
+
+  window.requestAnimationFrame = function (callback) {
+    queue.push(callback);
+    schedule();
+    return queue.length;
+  };
+})();
+
+// The field is a backdrop, not the subject, so it does not need retina pixels.
+// On a 2x display that is four times the fragments for something sitting behind
+// opaque panels. Pinned before the bundle reads it.
+try {
+  Object.defineProperty(window, 'devicePixelRatio', { get: function () { return 1; } });
+} catch (e) {}
+</script>
+
+<!-- One classic script, pre-bundled. ES modules cannot be loaded from a
+     file:// page in WKWebView, so the field ships bundled instead.
+     Rebuild with scripts/build_field.sh after changing the field source. -->
+<script src="./field.bundle.js"></script>
+
+<script>
+'use strict';
+
+// ---------------------------------------------------------------- formatting
+
+const fmtMoney = n =>
+  n >= 1000 ? '$' + n.toLocaleString('en-US', {maximumFractionDigits: 0})
+            : '$' + n.toFixed(2);
+
+function fmtTokens(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
+function fmtDuration(seconds) {
+  const s = Math.abs(seconds);
+  if (s < 60) return Math.round(s) + 's';
+  if (s < 3600) return Math.round(s / 60) + 'm';
+  if (s < 86400) return (s / 3600).toFixed(1) + 'h';
+  return Math.round(s / 86400) + 'd';
+}
+
+function fmtClockTime(epoch) {
+  return new Date(epoch * 1000)
+    .toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
+}
+
+function severity(pct) { return pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : ''; }
+
+const STATUS_COLOR = {
+  healthy: '#34c759', failing: '#ff3b30', paused: 'rgba(255,255,255,0.3)', unknown: '#ff9f0a'
+};
+
+// ---------------------------------------------------------------- vitals state
+// The centre is the particle field alone. CPU, memory, disk and the usage
+// windows are read from the panels, where they are legible.
+let vitals = { cpuPercent: 0, memoryPercent: 0, diskPercent: 0 };
+
+// ---------------------------------------------------------------- clock
+
+function tickClock() {
+  const now = new Date();
+  const hh = now.getHours() % 12 || 12;
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  const suffix = now.getHours() < 12 ? 'AM' : 'PM';
+  document.getElementById('clock').innerHTML =
+    `${hh}:${mm}<span class="sec">${ss} ${suffix}</span>`;
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+// ---------------------------------------------------------------- rendering
+
+function setMeter(barId, valId, pct, text) {
+  const bar = document.getElementById(barId);
+  bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+  bar.className = 'fill ' + severity(pct);
+  document.getElementById(valId).innerHTML = text;
+}
+
+function renderVitals(v) {
+  // Swift's Codable does not encode computed properties, so the percentages
+  // are derived here from the byte counts that do come across the bridge.
+  const pct = (used, total) => (total > 0 ? (used / total) * 100 : 0);
+  v.memoryPercent = pct(v.memoryUsedBytes, v.memoryTotalBytes);
+  v.diskPercent = pct(v.diskUsedBytes, v.diskTotalBytes);
+  vitals = v;
+  const gb = b => (b / 1e9).toFixed(1);
+  setMeter('cpuBar', 'cpuVal', v.cpuPercent, v.cpuPercent.toFixed(0) + '<small>%</small>');
+  setMeter('memBar', 'memVal', v.memoryPercent,
+           gb(v.memoryUsedBytes) + '<small>/ ' + gb(v.memoryTotalBytes) + ' GB</small>');
+  setMeter('dskBar', 'dskVal', v.diskPercent,
+           Math.round(v.diskUsedBytes / 1e9) + '<small>/ ' + Math.round(v.diskTotalBytes / 1e9) + ' GB</small>');
+  document.getElementById('cores').textContent = v.processorCount + ' CORES';
+  const thermal = document.getElementById('thermal');
+  thermal.textContent = v.thermalState.toUpperCase();
+  thermal.style.color = v.thermalState === 'nominal' ? 'var(--ok)'
+                      : v.thermalState === 'fair' ? 'var(--warn)' : 'var(--err)';
+  document.getElementById('uptime').textContent = fmtDuration(v.uptimeSeconds);
+
+  const rate = bps => bps == null ? '—' : fmtBytes(bps) + '/s';
+  document.getElementById('network').textContent =
+    '\u2193 ' + rate(v.networkInBytesPerSecond) + '   \u2191 ' + rate(v.networkOutBytesPerSecond);
+
+  const battery = document.getElementById('battery');
+  if (v.batteryPercent == null) {
+    battery.textContent = 'AC';
+  } else {
+    battery.textContent = v.batteryPercent.toFixed(0) + '%' + (v.isCharging ? ' \u26A1' : '');
+    battery.style.color = v.batteryPercent < 20 && !v.isCharging ? 'var(--err)' : 'var(--text)';
+  }
+}
+
+function fmtBytes(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + ' MB';
+  if (n >= 1e3) return (n / 1e3).toFixed(0) + ' KB';
+  return Math.round(n) + ' B';
+}
+
+function renderBrief(b) {
+  document.getElementById('greeting').textContent = b.greeting.toUpperCase();
+  document.getElementById('dateline').textContent = b.dateLine;
+
+  const host = document.getElementById('events');
+  const count = document.getElementById('eventCount');
+
+  if (!b.calendarAuthorized) {
+    count.textContent = 'NO ACCESS';
+    host.innerHTML = '<div class="empty">Calendar access not granted.</div>' +
+      '<button class="act atlas-btn atlas-btn--primary" onclick="atlasAction(\'requestCalendar\')">GRANT CALENDAR ACCESS</button>';
+    if (!b.remindersAuthorized) {
+      host.innerHTML +=
+        '<button class="act atlas-btn atlas-btn--primary" onclick="atlasAction(\'requestReminders\')">GRANT REMINDERS ACCESS</button>';
+    }
+    return;
+  }
+  count.textContent = b.events.length ? b.events.length + ' SCHEDULED' : 'CLEAR';
+  if (!b.events.length) {
+    host.innerHTML = '<div class="empty">Day is clear.</div>';
+  } else {
+    host.innerHTML = b.events.map(e =>
+      `<div class="event"><div class="t">${e.isAllDay ? 'ALL DAY' : fmtClockTime(e.startEpoch)}</div>` +
+      `<div class="n">${escapeHTML(e.title)}</div></div>`
+    ).join('');
+  }
+  if (b.overdueTasks > 0) {
+    host.innerHTML += `<div class="empty" style="color:var(--warn)">${b.overdueTasks} overdue reminder${b.overdueTasks === 1 ? '' : 's'}.</div>`;
+  }
+}
+
+// A service is only green when it is actually authenticated and operational —
+// "installed" is not the same as "working", and the HUD should not imply it is.
+function serviceColor(state) {
+  if (state === 'Authenticated & Operational' || state === 'Process Running' || state === 'Cloud Reachable') return '#34c759';
+  if (state === 'Error / Unreachable' || state === 'Not Installed') return '#ff3b30';
+  return '#ff9f0a';
+}
+
+function renderServices(services, loaded) {
+  const host = document.getElementById('services');
+  const online = services.filter(s => serviceColor(s.state) === '#34c759').length;
+  document.getElementById('svcCount').textContent =
+    services.length ? online + '/' + services.length + ' UP' : (loaded ? '' : 'SCANNING');
+  host.innerHTML = services.length
+    ? services.map(s =>
+        `<div class="svc tap atlas-tap" style="color:${serviceColor(s.state)}" onclick="atlasAction('openConnections')">` +
+        `<span class="dot" style="background:${serviceColor(s.state)}"></span>` +
+        `<span class="nm" title="${escapeHTML(s.name)}">${escapeHTML(s.name)}</span>` +
+        `<span class="st" title="${escapeHTML(s.state)}">${escapeHTML(s.state)}</span></div>`).join('')
+    : (loaded ? '<div class="empty">No services registered.</div>' : SCANNING);
+}
+
+// Before the first scan finishes an empty list means "not known yet". Saying
+// "none found" then would be stating a result we do not have.
+const SCANNING = '<div class="empty scanning">Scanning\u2026</div>';
+
+function renderWorkspace(w) {
+  document.getElementById('projCount').textContent =
+    w.loaded ? w.projectCount + ' TRACKED' : 'SCANNING';
+  const projects = document.getElementById('projects');
+  projects.innerHTML = w.projects.length
+    ? w.projects.map(p =>
+        `<div class="proj tap atlas-tap" onclick="atlasAction('openProjects')">` +
+        `<span class="nm">${escapeHTML(p.name)}</span>` +
+        `<span class="br">${escapeHTML(p.branch)}</span>` +
+        (p.uncommitted > 0 ? `<span class="ch">${p.uncommitted}\u25B2</span>` : '') +
+        `</div>`).join('')
+    : (w.loaded ? '<div class="empty">No projects found.</div>' : SCANNING);
+
+  document.getElementById('noteCount').textContent =
+    w.loaded ? (w.noteCount ? w.noteCount + ' RECENT' : '') : '';
+  const notes = document.getElementById('notes');
+  notes.innerHTML = w.notes.length
+    ? w.notes.map(n =>
+        `<div class="note tap atlas-tap" onclick="atlasAction('openNotes')">${escapeHTML(n.title)} ` +
+        `<em>${escapeHTML(n.vault)}</em></div>`).join('')
+    : (w.loaded ? '<div class="empty">No Markdown notes in registered vaults.</div>' : SCANNING);
+
+  if (w.pendingApprovals > 0) {
+    notes.innerHTML +=
+      `<div class="empty" style="color:var(--warn)">${w.pendingApprovals} approval` +
+      `${w.pendingApprovals === 1 ? '' : 's'} pending.</div>` +
+      `<button class="act atlas-btn atlas-btn--primary" onclick="atlasAction('openActivity')">REVIEW</button>`;
+  }
+}
+
+function renderCron(c) {
+  document.getElementById('cronSummary').textContent =
+    `${c.healthy} HEALTHY · ${c.failing} FAILING · ${c.activeIncidents} ACTIVE INCIDENTS`;
+
+  const host = document.getElementById('jobs');
+  if (!c.jobs.length) {
+    host.innerHTML = '<div class="empty">No scheduled jobs found.</div>';
+    return;
+  }
+  const now = Date.now() / 1000;
+  host.innerHTML = c.jobs.map(j => {
+    const color = STATUS_COLOR[j.health] || STATUS_COLOR.unknown;
+    const strip = j.recentStatuses.slice(0, 14).reverse()
+      .map(s => `<i class="${s === 'completed' ? 'ok' : s === 'failed' ? 'no' : ''}"></i>`).join('');
+    const next = j.nextRunEpoch
+      ? (j.nextRunEpoch > now ? 'in ' + fmtDuration(j.nextRunEpoch - now) : 'due')
+      : (j.health === 'paused' ? 'paused' : 'unscheduled');
+    const badge = j.failureStreak > 0 ? `<span class="badge">${j.failureStreak}×</span>` : '';
+    return `<div class="job tap atlas-tap" style="--st:${color}" onclick="atlasAction('openAutomations')">
+      <div class="n"><span class="dot"></span>${escapeHTML(j.name)}${badge}</div>
+      <div class="s">${escapeHTML(j.schedule)}</div>
+      <div class="next">${next}</div>
+      <div class="strip">${strip}</div>
+    </div>`;
+  }).join('');
+}
+
+// The soonest job that is actually scheduled — the single most useful thing
+// the calendar panel can say when the day itself is clear.
+function renderNextUp(c) {
+  const host = document.getElementById('nextUp');
+  const now = Date.now() / 1000;
+  const upcoming = c.jobs
+    .filter(j => j.nextRunEpoch && j.nextRunEpoch > now)
+    .sort((a, b) => a.nextRunEpoch - b.nextRunEpoch)[0];
+  host.innerHTML = upcoming
+    ? `<div class="cap atlas-cap" style="margin-top:11px"><span>NEXT SCHEDULED</span></div>` +
+      `<div class="event tap atlas-tap" onclick="atlasAction('openAutomations')">` +
+      `<div class="t">${fmtDuration(upcoming.nextRunEpoch - now)}</div>` +
+      `<div class="n">${escapeHTML(upcoming.name)}</div></div>`
+    : '';
+}
+
+// The windows that actually gate the work. On a flat plan these matter more
+// than any dollar figure, so they lead the panel.
+function renderLimits(u) {
+  const host = document.getElementById('limits');
+
+  if (!u.configured) {
+    host.innerHTML = '<div class="empty">Usage windows unavailable — the status line hook ' +
+      'is not writing ~/.claude/atlas-statusline.json.</div>';
+    return;
+  }
+  if (u.fiveHourPercent == null && u.sevenDayPercent == null) {
+    host.innerHTML = '<div class="empty">Waiting for a Claude Code session to report usage.</div>';
+    return;
+  }
+
+  const meter = (label, pct, resetsIn) => {
+    if (pct == null) return '';
+    const level = pct >= 85 ? 'crit' : pct >= 60 ? 'warn' : '';
+    const reset = resetsIn ? `resets in ${fmtDuration(resetsIn)}` : '';
+    return `<div class="lim">
+      <div class="row"><span>${label}</span>
+        <span><b>${Math.round(pct)}%</b> <em>${reset}</em></span></div>
+      <div class="track"><div class="fill ${level}" style="width:${Math.min(100, pct)}%"></div></div>
+    </div>`;
+  };
+
+  // Stale numbers are labelled, never quietly shown as current.
+  const stale = u.stale
+    ? `<div class="empty" style="color:var(--warn)">As of ${fmtDuration(u.ageSeconds)} ago — ` +
+      `no Claude Code session running.</div>`
+    : '';
+
+  host.innerHTML =
+    meter('5-HOUR WINDOW', u.fiveHourPercent, u.fiveHourResetsInSeconds) +
+    meter('7-DAY WINDOW', u.sevenDayPercent, u.sevenDayResetsInSeconds) +
+    stale;
+}
+
+function renderSessions(s) {
+  document.getElementById('spendTotal').innerHTML =
+    fmtMoney(s.totalCost) + '<small>EQUIV · 30D</small>';
+  document.getElementById('spendToday').textContent = fmtMoney(s.todayCost);
+  document.getElementById('transcripts').textContent = s.transcripts;
+  document.getElementById('tokCacheR').textContent = fmtTokens(s.cacheReadTokens);
+  document.getElementById('tokCacheW').textContent = fmtTokens(s.cacheWriteTokens);
+  document.getElementById('tokOut').textContent = fmtTokens(s.outputTokens);
+  document.getElementById('tokIn').textContent = fmtTokens(s.inputTokens);
+
+  const scan = document.getElementById('scanState');
+  scan.textContent = s.isScanning ? 'SCANNING' : '';
+  scan.className = s.isScanning ? 'scanning' : '';
+
+  const peak = Math.max(...s.dailyCosts, 0.01);
+  document.getElementById('bars').innerHTML = s.dailyCosts.map((c, i) => {
+    const last = i === s.dailyCosts.length - 1;
+    return `<i class="${last ? 'today' : ''}" style="height:${Math.max(1, (c / peak) * 100)}%" ` +
+           `title="${s.dailyLabels[i]} — ${fmtMoney(c)}"></i>`;
+  }).join('');
+
+  // Pace, not just total: a 30-day average next to what today is actually on
+  // track to cost. Today is partial, so it is extrapolated by elapsed hours.
+  const days = s.dailyCosts.length || 1;
+  const average = s.totalCost / days;
+  const hours = new Date().getHours() + new Date().getMinutes() / 60;
+  const projected = hours > 0.5 ? s.todayCost * (24 / hours) : s.todayCost;
+  document.getElementById('burn').innerHTML =
+    `<span>AVG/DAY <b>${fmtMoney(average)}</b></span>` +
+    `<span>TODAY PACE <b class="${projected > average * 1.25 ? 'over' : ''}">${fmtMoney(projected)}</b></span>`;
+
+  document.getElementById('models').textContent =
+    s.byModel.slice(0, 4).map(m => `${m.model} ${fmtMoney(m.cost)}`).join('   ·   ');
+
+  // Any model without a published rate is named, never folded into the total.
+  const unpriced = Object.keys(s.unpricedModels || {});
+  document.getElementById('disclaimer').textContent =
+    'Equivalent API cost from local transcripts. Not a bill.' +
+    (unpriced.length ? '  Unpriced, excluded: ' + unpriced.join(', ') + '.' : '');
+}
+
+/// Sends a named action to Swift. The native side matches it against a fixed
+/// list, so an unexpected string is logged and dropped rather than executed.
+// The field's world is switched through the pen's own button handler rather
+// than by reaching into its internals — its code stays untouched.
+let currentWorld = -1;
+function setWorld(index) {
+  if (index === currentWorld || index == null || index < 0) return;
+  const button = document.querySelector(`#fieldChrome [data-planet="${index}"]`);
+  if (!button) return;
+  currentWorld = index;
+  button.click();
+}
+
+// Voice loudness, read by the field each frame.
+function setVoiceEnergy(value) {
+  window.__atlasVoiceEnergy = Math.max(0, Math.min(1, value || 0));
+}
+
+// Fast lane: called ~30x a second straight from the voice service while audio
+// plays, so the field stays live without the whole payload being rebuilt.
+// The slow payload path still sets these, which covers the idle case.
+window.atlasEnergy = function (rms, bass, mid, treble) {
+  const clamp = v => Math.max(0, Math.min(1, Number(v) || 0));
+  window.__atlasVoiceEnergy = clamp(rms);
+  window.__atlasAudioEnergy = {
+    rms: clamp(rms), bass: clamp(bass), mid: clamp(mid), treble: clamp(treble)
+  };
+};
+
+function setAgenticTelemetry(payload) {
+  window.__atlasSovereignState = payload.sovereignState || 'idle';
+  if (payload.audioEnergy) {
+    window.__atlasAudioEnergy = payload.audioEnergy;
+  }
+}
+
+function renderSovereignState(payload) {
+  const pill = document.getElementById('modePill');
+  if (!pill) return;
+  const state = (payload.sovereignState || 'idle').toUpperCase();
+  pill.textContent = 'SOVEREIGN · ' + state;
+  pill.className = 'pill';
+
+  if (state === 'LISTENING') {
+    pill.style.borderColor = 'rgba(63, 208, 255, 0.7)';
+    pill.style.color = 'var(--cyan)';
+  } else if (state === 'PROCESSING' || state === 'EXECUTING') {
+    pill.style.borderColor = 'rgba(255, 255, 255, 0.8)';
+    pill.style.color = 'var(--gold)';
+  } else if (state === 'SPEAKING' || state === 'PREPARINGSPEECH') {
+    pill.style.borderColor = 'rgba(255, 215, 0, 0.9)';
+    pill.style.color = 'var(--gold)';
+  } else if (state === 'AWAITINGAPPROVAL') {
+    pill.className = 'pill alert';
+    pill.textContent = 'SOVEREIGN · APPROVAL REQUIRED';
+  } else if (state === 'ERROR' || state === 'INTERRUPTED') {
+    pill.className = 'pill alert';
+    pill.textContent = 'SOVEREIGN · ' + state;
+  } else {
+    pill.style.borderColor = 'var(--edge)';
+    pill.style.color = 'var(--cyan-dim)';
+  }
+}
+
+window.atlasAction = function (name) {
+  try {
+    window.webkit.messageHandlers.atlas.postMessage(name);
+  } catch (err) {
+    console.log('atlas bridge unavailable: ' + err.message);
+  }
+};
+
+function escapeHTML(text) {
+  return String(text).replace(/[&<>"']/g, ch =>
+    ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
+}
+
+// ---------------------------------------------------------------- entry point
+// Swift calls this on every tick with a full snapshot.
+
+// The button reflects the service's actual state rather than guessing on a
+// timer. Warming the model takes about a minute the first time; saying so is
+// the difference between "loading" and "broken".
+const VOICE_LABEL = {
+  cold: 'BRIEF ME',
+  ready: 'BRIEF ME',
+  warming: 'WARMING…',
+  synthesizing: 'SYNTHESIZING…',
+  speaking: 'STOP',
+  failed: 'VOICE FAILED',
+  unavailable: 'VOICE OFF'
+};
+
+window.toggleSpeak = function () {
+  const btn = document.getElementById('speakBtn');
+  // Only speech in progress is interruptible; a press while warming would kill
+  // the model load and start the wait over.
+  atlasAction(btn.dataset.state === 'speaking' ? 'stopSpeaking' : 'speakBrief');
+};
+
+function renderVoice(payload) {
+  const btn = document.getElementById('speakBtn');
+  btn.hidden = !payload.voiceAvailable;
+  if (!payload.voiceAvailable) return;
+
+  const state = payload.voiceState || 'cold';
+  btn.dataset.state = state;
+  btn.textContent = VOICE_LABEL[state] || 'BRIEF ME';
+  btn.title = payload.voiceDetail || '';
+  btn.classList.toggle('busy', state === 'warming' || state === 'synthesizing');
+  btn.style.opacity = (state === 'warming' || state === 'synthesizing') ? '0.72' : '1';
+}
+
+window.atlasRender = function (payload) {
+  try {
+    renderVitals(payload.vitals);
+    renderBrief(payload.brief);
+    renderWorkspace(payload.workspace);
+    renderServices(payload.workspace.services, payload.workspace.loaded);
+    renderCron(payload.cron);
+    renderNextUp(payload.cron);
+    renderSessions(payload.sessions);
+    renderLimits(payload.usage);
+
+    // Only offer the button when the local voice runtime is actually present.
+    renderVoice(payload);
+    renderSovereignState(payload);
+    setWorld(payload.fieldWorld);
+    setVoiceEnergy(payload.voiceEnergy);
+    setAgenticTelemetry(payload);
+
+    document.getElementById('stamp').textContent =
+      'SYNC ' + new Date(payload.generatedEpoch * 1000)
+        .toLocaleTimeString('en-US', {hour12: false});
+
+    const alert = document.getElementById('alertPill');
+    const failing = payload.cron.failing;
+    if (failing > 0) {
+      alert.hidden = false;
+      alert.textContent = failing + ' JOB' + (failing === 1 ? '' : 'S') + ' FAILING';
+    } else {
+      alert.hidden = true;
+    }
+  } catch (err) {
+    document.getElementById('stamp').textContent = 'RENDER ERROR: ' + err.message;
+  }
+};
+</script>
+</body>
+</html>

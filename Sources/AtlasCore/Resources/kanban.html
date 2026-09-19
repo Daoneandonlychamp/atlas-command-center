@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Board view over Apple Reminders.
+
+  Columns are Reminders lists and cards are reminders — nothing is stored here.
+  Moving a card writes the reminder into another list, so the board, your phone
+  and Siri are all looking at the same data.
+
+  Like calendar.html this page may call into the app, through the same fixed set
+  of named actions. Reminder text still goes through escapeHtml: a reminder can
+  arrive from a shared list somebody else writes to.
+
+  Sortable.min.js is vendored (MIT) rather than loaded from a CDN, which the CSP
+  forbids. Pure logic sits between the marker comments for Tests/kanban_test.js.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATLAS Board</title>
+<style>
+/* Shared tokens, reset, controls and components arrive from atlas-theme.css /
+   atlas-components.css, injected ahead of this block. Only what is genuinely
+   the board's own lives here. */
+:root{
+  /* Columns sit lighter than the HUD's instrument panels. */
+  --panel: rgba(15, 19, 26, 0.72);
+}
+html,body{overflow:hidden}
+#app{display:flex;flex-direction:column;height:100%}
+
+/* ---------- toolbar ---------- */
+.bar h1{font-size:var(--fs-title);font-weight:600;letter-spacing:var(--ls-tight)}
+.toggle{display:flex;align-items:center;gap:7px;font-size:var(--fs-meta);color:var(--muted);
+  cursor:pointer;padding:5px 9px;border-radius:var(--r-md);border:1px solid transparent}
+.toggle:hover{color:var(--text);border-color:var(--edge-soft)}
+.toggle input{accent-color:var(--gold);margin:0}
+#add{flex:0 1 420px;height:31px}
+
+/* ---------- board ---------- */
+.board{flex:1;display:flex;gap:12px;padding:14px 16px;overflow-x:auto;align-items:flex-start;
+  min-height:0}
+.col{flex:0 0 282px;max-height:100%;display:flex;flex-direction:column;
+  background:var(--panel);border:1px solid var(--edge-soft);border-radius:var(--r-lg);
+  overflow:hidden}
+.col .head{display:flex;align-items:center;gap:8px;padding:11px 13px 9px;flex:none}
+.col .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.col .name{font-size:var(--fs-label);font-weight:700;letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.col .n{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--fs-micro);
+  color:var(--faint)}
+.col .cards{flex:1;overflow-y:auto;padding:0 9px 9px;display:flex;flex-direction:column;gap:7px;
+  min-height:44px}
+.col .add{padding:8px 13px 11px;font-size:var(--fs-meta);color:var(--muted);text-align:left;
+  flex:none;border-radius:var(--r-md)}
+.col .add:hover{color:var(--gold)}
+
+.card{background:var(--raised);border:1px solid var(--edge-soft);border-left-width:2.5px;
+  border-left-color:var(--gold-dim);border-radius:var(--r-md);padding:9px 10px;cursor:grab;
+  transition:border-color var(--dur-fast),transform .06s}
+.card:hover{border-color:rgba(255,255,255,.14)}
+.card:active{cursor:grabbing}
+.card .t{font-size:var(--fs-body);line-height:1.4;word-break:break-word}
+.card.done .t{text-decoration:line-through;color:var(--faint)}
+.card .meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px;align-items:center}
+.card .tag{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--fs-micro);
+  letter-spacing:var(--ls-micro);color:var(--muted)}
+.card .tag.due{color:var(--gold-dim)}
+.card .tag.due.over{color:var(--err)}
+.card .tag.age{color:var(--faint)}
+/* Card aging, borrowed from Kanboard: a card that has sat untouched starts to
+   show it, so stale work is visible without opening anything. */
+.card.age1{border-left-color:var(--warn)}
+.card.age2{border-left-color:var(--err)}
+.card.age2 .tag.age{color:var(--err)}
+.card .pri{font-family:var(--mono);font-size:var(--fs-micro);font-weight:700;padding:1px 5px;
+  border-radius:3px;background:rgba(255,159,10,.16);color:var(--warn)}
+.card .pri.high{background:rgba(255,59,48,.16);color:var(--err)}
+.card .check{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--gold-dim);
+  flex:none;cursor:pointer}
+.card .check:hover{background:rgba(212,176,89,.2)}
+.card .row{display:flex;gap:8px;align-items:flex-start}
+.sortable-ghost{opacity:.35}
+.sortable-drag{box-shadow:0 12px 28px rgba(0,0,0,.55)}
+
+/* ---------- starter column ---------- */
+/* Offered when there is only one list: a board needs somewhere for work to go. */
+.col.starter{background:rgba(15,19,26,.4);border-style:dashed}
+.col.starter .name{color:var(--gold-dim)}
+.blurb{font-size:var(--fs-meta);line-height:1.55;color:var(--muted);padding:2px 2px 10px}
+.starterAdd{display:block;width:100%;text-align:left;padding:9px 11px;margin-bottom:6px;
+  border:1px solid var(--edge-soft);border-radius:var(--r-md);font-size:var(--fs-body);
+  color:var(--gold-dim);transition:background var(--dur-fast),color var(--dur-fast)}
+.starterAdd:hover:not(:disabled){background:rgba(212,176,89,.1);color:var(--gold)}
+.starterAdd:disabled{opacity:.5}
+
+/* The board is one wide row, so a board-level empty state should use that
+   width rather than hugging the left edge. */
+.boardEmpty{flex:1;display:grid;place-items:center;min-height:0;align-self:stretch}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar atlas-toolbar">
+    <div class="atlas-toolbar__id">
+      <h1 class="atlas-toolbar__title">Board</h1>
+      <span class="atlas-toolbar__context" id="boardContext">Columns are your Reminders lists</span>
+    </div>
+    <div class="spacer atlas-spacer"></div>
+    <label class="toggle"><input type="checkbox" id="showDone"> Show done</label>
+    <div id="add" class="atlas-field">
+      <input id="addInput" placeholder="Ship the build !1 @Work ^tomorrow" spellcheck="false"
+             aria-label="Add a card">
+      <span class="syntax atlas-field__hint">!1-3 @list ^when</span>
+    </div>
+  </div>
+  <div class="board" id="board"></div>
+</div>
+<div id="toast" class="atlas-toast" role="status" aria-live="polite"></div>
+
+<script src="sortable.min.js"></script>
+<script>
+'use strict';
+/* ---------- pure logic (tested in Tests/kanban_test.js) ---------- */
+const DAY_MS = 86400000;
+
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g, ch =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+/* Quick-add syntax, after Vikunja's "quick add magic".
+     !1 !2 !3   priority, high to low
+     @list      which column it lands in (prefix match, case-insensitive)
+     ^when      today | tomorrow | mon..sun | YYYY-MM-DD | +3d
+   Parsed here rather than by the model: for the shapes people actually type this
+   is instant and always right, and the model is not in the loop at all. */
+function parseQuickAdd(text, now){
+  now = now || new Date();
+  let rest = String(text);
+  const out = { title: '', priority: 0, list: null, due: null };
+
+  rest = rest.replace(/(?:^|\s)!([1-3])(?=\s|$)/g, (_, p) => { out.priority = Number(p); return ' '; });
+  rest = rest.replace(/(?:^|\s)@([^\s]+)/g, (_, name) => { out.list = name; return ' '; });
+  rest = rest.replace(/(?:^|\s)\^([^\s]+)/g, (_, when) => {
+    const due = parseWhen(when, now);
+    if (due) { out.due = due; return ' '; }
+    return ' ^' + when;   // not a date we understand — leave it in the title
+  });
+
+  out.title = rest.replace(/\s+/g, ' ').trim();
+  return out;
+}
+
+const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+function parseWhen(token, now){
+  const at9 = date => { const d = new Date(date); d.setHours(9, 0, 0, 0); return d; };
+  const word = token.toLowerCase();
+
+  if (word === 'today') return at9(now);
+  if (word === 'tomorrow') return at9(new Date(now.getTime() + DAY_MS));
+
+  const relative = word.match(/^\+(\d+)([dw])$/);
+  if (relative){
+    const days = Number(relative[1]) * (relative[2] === 'w' ? 7 : 1);
+    return at9(new Date(now.getTime() + days * DAY_MS));
+  }
+
+  const iso = word.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return at9(new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])));
+
+  const index = WEEKDAYS.findIndex(day => day.startsWith(word) && word.length >= 3);
+  if (index >= 0){
+    // Always the *next* one: "^friday" typed on a Friday means the week after,
+    // not five minutes ago.
+    let ahead = (index - now.getDay() + 7) % 7;
+    if (ahead === 0) ahead = 7;
+    return at9(new Date(now.getTime() + ahead * DAY_MS));
+  }
+  return null;
+}
+
+/* How stale a card is, in Kanboard's sense: days since it was last touched.
+   Only open cards age — a finished card sitting in Done is not rot. */
+function ageOf(card, now){
+  if (card.completed) return { days: 0, level: 0 };
+  const stamp = card.modified || card.created;
+  if (!stamp) return { days: 0, level: 0 };
+  const days = Math.floor((now - new Date(stamp).getTime()) / DAY_MS);
+  return { days, level: days >= 14 ? 2 : days >= 7 ? 1 : 0 };
+}
+
+function dueLabel(due, now){
+  if (!due) return null;
+  const date = new Date(due);
+  const days = Math.round((date - now) / DAY_MS);
+  const overdue = date.getTime() < now;
+  let text;
+  if (overdue) text = 'overdue';
+  else if (days === 0) text = 'today';
+  else if (days === 1) text = 'tomorrow';
+  else if (days < 7) text = date.toLocaleDateString(undefined, { weekday: 'short' });
+  else text = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return { text, overdue };
+}
+/* ---------- end pure logic ---------- */
+
+const ACTIONS = ['load','move','create','toggle','delete','rename','createList','schedule'];
+function send(action, payload){
+  if (!ACTIONS.includes(action)) return;
+  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.atlas){
+    window.webkit.messageHandlers.atlas.postMessage(JSON.stringify(
+      Object.assign({ action }, payload || {})));
+  }
+}
+
+let state = { lists: [], cards: [], showDone: false };
+const $ = id => document.getElementById(id);
+
+function toast(message, bad){
+  const el = $('toast');
+  el.textContent = message;
+  el.className = 'on' + (bad ? ' bad' : '');
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.className = ''; }, 2600);
+}
+
+window.atlasBoard = {
+  render(json){
+    try {
+      const data = JSON.parse(json);
+      state.lists = data.lists || [];
+      state.cards = data.cards || [];
+      draw();
+    } catch (e) { console.error('render', e); }
+  },
+  notify(message, bad){ toast(message, bad); }
+};
+
+function draw(){
+  const board = $('board');
+  board.innerHTML = '';
+  const now = Date.now();
+
+  const context = $('boardContext');
+  if (context){
+    context.textContent = state.lists.length
+      ? state.lists.length + (state.lists.length === 1 ? ' list' : ' lists') + ' from Reminders'
+      : 'Columns are your Reminders lists';
+  }
+
+  if (!state.lists.length){
+    board.innerHTML =
+      '<div class="boardEmpty"><div class="atlas-empty">' +
+        '<div class="atlas-empty__mark">\u25A6</div>' +
+        '<div class="atlas-empty__title">No reminder lists</div>' +
+        '<div class="atlas-empty__body">This board mirrors your Reminders lists. ' +
+          'Create one in Reminders and it appears here as a column.</div>' +
+      '</div></div>';
+    return;
+  }
+
+  // One list is not a board — there is nowhere for work to move to. Offer the
+  // columns rather than leaving a single stack that looks broken.
+  if (state.lists.length === 1) board.appendChild(starterColumns());
+
+  state.lists.forEach(list => {
+    const cards = state.cards
+      .filter(c => c.listId === list.id)
+      .filter(c => state.showDone || !c.completed)
+      .sort((a, b) => {
+        if (a.completed !== b.completed) return a.completed ? 1 : -1;
+        const ad = a.due ? new Date(a.due).getTime() : Infinity;
+        const bd = b.due ? new Date(b.due).getTime() : Infinity;
+        if (ad !== bd) return ad - bd;
+        return (b.priority ? 10 - b.priority : 0) - (a.priority ? 10 - a.priority : 0);
+      });
+
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.dataset.list = list.id;
+
+    const head = document.createElement('div');
+    head.className = 'head';
+    const dot = document.createElement('div');
+    dot.className = 'dot';
+    dot.style.background = list.color || '#d4b059';
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = list.title;
+    const count = document.createElement('div');
+    count.className = 'n';
+    count.textContent = cards.filter(c => !c.completed).length;
+    head.appendChild(dot); head.appendChild(name); head.appendChild(count);
+
+    const holder = document.createElement('div');
+    holder.className = 'cards';
+    holder.dataset.list = list.id;
+    cards.forEach(card => holder.appendChild(buildCard(card, now)));
+
+    const add = document.createElement('button');
+    add.className = 'add';
+    add.textContent = '+  Add a card';
+    add.addEventListener('click', () => {
+      $('addInput').value = '@' + list.title.split(' ')[0] + ' ';
+      $('addInput').focus();
+    });
+
+    col.appendChild(head); col.appendChild(holder); col.appendChild(add);
+    board.appendChild(col);
+
+    // Sortable (MIT, vendored) handles cross-column dragging, autoscroll and the
+    // drop placeholder — all of which is fiddly to hand-roll and easy to get
+    // subtly wrong on a trackpad.
+    Sortable.create(holder, {
+      group: 'board',
+      animation: 130,
+      ghostClass: 'sortable-ghost',
+      dragClass: 'sortable-drag',
+      onEnd(event){
+        const listId = event.to.dataset.list;
+        if (listId === event.from.dataset.list) return;   // reordering only
+        send('move', { id: event.item.dataset.id, listId });
+      }
+    });
+  });
+}
+
+/* Suggests the columns a board needs, creating them as real Reminders lists. */
+function starterColumns(){
+  const wrap = document.createElement('div');
+  wrap.className = 'col starter';
+  wrap.innerHTML = '<div class="head"><div class="name">Start the board</div></div>';
+
+  const body = document.createElement('div');
+  body.className = 'cards';
+  const blurb = document.createElement('div');
+  blurb.className = 'blurb';
+  blurb.textContent = 'A board needs somewhere for work to move to. Each of these becomes a real Reminders list — on your phone too.';
+  body.appendChild(blurb);
+
+  ['In Progress', 'Blocked', 'Done'].forEach(name => {
+    const button = document.createElement('button');
+    button.className = 'starterAdd';
+    button.textContent = '+  ' + name;
+    button.addEventListener('click', () => {
+      button.disabled = true;
+      button.textContent = 'Creating ' + name + '…';
+      send('createList', { title: name });
+    });
+    body.appendChild(button);
+  });
+
+  wrap.appendChild(body);
+  return wrap;
+}
+
+function buildCard(card, now){
+  const el = document.createElement('div');
+  const age = ageOf(card, now);
+  el.className = 'card' + (card.completed ? ' done' : '') + (age.level ? ' age' + age.level : '');
+  el.dataset.id = card.id;
+
+  const row = document.createElement('div');
+  row.className = 'row';
+
+  const check = document.createElement('div');
+  check.className = 'check';
+  if (card.completed) check.style.background = 'rgba(212,176,89,.55)';
+  check.addEventListener('click', e => {
+    e.stopPropagation();
+    send('toggle', { id: card.id, completed: !card.completed });
+  });
+
+  const title = document.createElement('div');
+  title.className = 't';
+  title.textContent = card.title;
+
+  row.appendChild(check); row.appendChild(title);
+  el.appendChild(row);
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+
+  if (card.priority && card.priority > 0){
+    const pri = document.createElement('span');
+    // EventKit: 1–4 high, 5 medium, 6–9 low.
+    const high = card.priority <= 4;
+    pri.className = 'pri' + (high ? ' high' : '');
+    pri.textContent = high ? 'HIGH' : card.priority === 5 ? 'MED' : 'LOW';
+    meta.appendChild(pri);
+  }
+
+  const due = dueLabel(card.due, now);
+  if (due){
+    const tag = document.createElement('span');
+    tag.className = 'tag due' + (due.overdue ? ' over' : '');
+    tag.textContent = due.text;
+    meta.appendChild(tag);
+  }
+
+  if (age.level){
+    const tag = document.createElement('span');
+    tag.className = 'tag age';
+    tag.textContent = age.days + 'd untouched';
+    meta.appendChild(tag);
+  }
+
+  if (meta.children.length) el.appendChild(meta);
+
+  // Right-click rather than another always-visible button: these are occasional
+  // actions and the card should stay readable.
+  el.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    openCardMenu(card, e.clientX, e.clientY);
+  });
+  return el;
+}
+
+/* Card actions. Scheduling turns a card into an hour on the calendar — the
+   board says what is worth doing, the calendar says when. */
+function openCardMenu(card, x, y){
+  document.querySelectorAll('.menu').forEach(m => m.remove());
+  const menu = document.createElement('div');
+  menu.className = 'menu atlas-menu';
+  menu.style.left = Math.min(x, window.innerWidth - 190) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - 130) + 'px';
+
+  const item = (label, fn, danger) => {
+    const button = document.createElement('button');
+    button.textContent = label;
+    if (danger) button.className = 'danger';
+    button.addEventListener('click', () => { menu.remove(); fn(); });
+    menu.appendChild(button);
+  };
+
+  item('Schedule on the calendar', () => send('schedule', { id: card.id }));
+  item(card.completed ? 'Mark not done' : 'Mark done',
+       () => send('toggle', { id: card.id, completed: !card.completed }));
+  item('Delete', () => send('delete', { id: card.id }), true);
+
+  document.body.appendChild(menu);
+  const dismiss = () => { menu.remove(); document.removeEventListener('mousedown', dismiss); };
+  setTimeout(() => document.addEventListener('mousedown', dismiss), 0);
+}
+
+$('addInput').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const text = e.target.value.trim();
+  if (!text) return;
+  const parsed = parseQuickAdd(text, new Date());
+  if (!parsed.title){ toast('Give it a title', true); return; }
+
+  // @list is matched here against the lists we know about, so the app is handed
+  // a real identifier rather than a name to guess at.
+  let listId = null;
+  if (parsed.list){
+    const wanted = parsed.list.toLowerCase();
+    const hit = state.lists.find(l => l.title.toLowerCase().startsWith(wanted));
+    if (!hit){ toast('No list matching “' + parsed.list + '”', true); return; }
+    listId = hit.id;
+  }
+  send('create', {
+    title: parsed.title,
+    listId,
+    priority: parsed.priority,
+    due: parsed.due ? parsed.due.toISOString() : null
+  });
+  e.target.value = '';
+});
+
+$('showDone').addEventListener('change', e => {
+  state.showDone = e.target.checked;
+  draw();
+});
+
+send('load');
+</script>
+</body>
+</html>

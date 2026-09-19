@@ -1,0 +1,187 @@
+/* ATLAS shared theme — tokens, reset, type scale, interaction states.
+ *
+ * Injected into every page as <style id="atlas-shared-styles"> at document
+ * start (see AtlasResources.sharedStyles). It is deliberately NOT loaded with
+ * <link>: these pages run from file:// under a CSP with no 'self' in
+ * style-src, and Chat and Canvas are given read access to nothing but their
+ * own file. Injection keeps that boundary exactly where it is.
+ *
+ * Because it lands before each page's own <style>, every rule here is a
+ * default a page may override simply by declaring the same property.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* ---------- surface ---------- */
+  --bg:        #090a0c;
+  --panel:     rgba(18, 20, 24, 0.92);
+  --panel-hi:  rgba(25, 27, 32, 0.94);
+  --raised:    rgba(29, 32, 38, 0.96);
+
+  /* Structural hairline. hud.html and chat.html tint theirs gold; they
+     override this token locally rather than forking the component rules. */
+  --edge:      rgba(255, 255, 255, 0.16);
+  --edge-soft: rgba(255, 255, 255, 0.075);
+
+  /* ---------- ink ---------- */
+  --gold:      rgba(255, 255, 255, 0.94);
+  --gold-dim:  rgba(255, 255, 255, 0.53);
+  --cyan:      #3fd0ff;
+  --cyan-dim:  rgba(63, 208, 255, 0.45);
+  --text:      rgba(255, 255, 255, 0.92);
+  --muted:     rgba(255, 255, 255, 0.42);
+  --faint:     rgba(255, 255, 255, 0.18);
+  --ok:        #34c759;
+  --warn:      #ff9f0a;
+  --err:       #ff3b30;
+
+  /* ---------- type ---------- */
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+
+  /* One scale, five steps. The floor is 10.5px: below that the uppercase
+     tracked labels this interface leans on stop being readable at a glance,
+     which is the whole point of an instrument panel. */
+  --fs-micro: 10.5px;  /* dense telemetry, tags, timestamps */
+  --fs-label: 11px;    /* panel captions, column names, field labels */
+  --fs-meta:  11.5px;  /* secondary rows, toast copy */
+  --fs-body:  12.5px;  /* default content and controls */
+  --fs-read:  13px;    /* sustained reading */
+  --fs-title: 15px;    /* page identity */
+
+  /* Tracking, dialled back from the 1.9–3.4px the pages had drifted to.
+     Caps still read as caps; they just stop looking stretched. */
+  --ls-caps:  1.1px;
+  --ls-micro: 0.8px;
+  --ls-tight: -0.01em;
+
+  /* ---------- geometry ---------- */
+  --r-sm: 3px;
+  --r-md: 6px;
+  --r-lg: 9px;
+
+  /* ---------- focus ---------- */
+  --focus:      var(--cyan);
+  --focus-ring: 0 0 0 2px rgba(6, 7, 10, 0.9), 0 0 0 3.5px var(--cyan);
+
+  --dur-fast: 0.12s;
+  --dur:      0.18s;
+}
+
+/* ---------- reset ---------- */
+
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--fs-read);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+button:disabled { cursor: default; opacity: 0.45; }
+
+/* Components below set display, which would otherwise beat the UA rule for
+   [hidden] and reveal controls the pages deliberately hide. */
+[hidden] { display: none !important; }
+
+input, textarea, select { font: inherit; color: inherit; }
+
+::selection { background: rgba(255, 255, 255, 0.22); }
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:        #f0ece4;
+    --panel:     rgba(247, 243, 236, 0.94);
+    --panel-hi:  rgba(252, 249, 243, 0.97);
+    --raised:    rgba(255, 253, 248, 0.98);
+    --edge:      rgba(29, 27, 24, 0.25);
+    --edge-soft: rgba(29, 27, 24, 0.14);
+    --gold:      rgba(17, 18, 21, 0.94);
+    --gold-dim:  rgba(29, 27, 24, 0.72);
+    --text:      rgba(29, 27, 24, 0.96);
+    --muted:     rgba(29, 27, 24, 0.68);
+    --faint:     rgba(29, 27, 24, 0.48);
+    --cyan:      #176b87;
+    --cyan-dim:  rgba(23, 107, 135, 0.48);
+    --ok:        #16833c;
+    --warn:      #a75a00;
+    --err:       #c92d25;
+    --focus-ring: 0 0 0 2px rgba(240, 236, 228, 0.95), 0 0 0 3.5px var(--cyan);
+  }
+}
+
+/* ---------- utilities ---------- */
+
+/* Telemetry and anything the eye scans as a column of numbers. */
+.mono,
+.atlas-mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.atlas-spacer { flex: 1; }
+
+.atlas-truncate {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Visible only to screen readers — used to name icon-only controls. */
+.atlas-sr {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------- focus ---------- */
+
+/* Pointer users see nothing; keyboard users get an unmistakable cyan ring on
+   every interactive element, including ones the pages style themselves. */
+:focus { outline: none; }
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--r-sm);
+  position: relative;
+  z-index: 2;
+}
+
+/* Inputs already carry a border, so they take a tighter ring that does not
+   sit outside their own box. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  box-shadow: 0 0 0 2px rgba(63, 208, 255, 0.55);
+  border-color: var(--cyan-dim);
+}
+
+/* ---------- reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

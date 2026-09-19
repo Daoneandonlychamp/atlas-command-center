@@ -1,0 +1,3805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATLAS Cinema</title>
+<style>
+/* Cinema deliberately does NOT wear atlas-theme.css / atlas-components.css.
+   Every other surface is an instrument panel — dense, hairlined, adaptive to
+   the system appearance. This one is a cinema: full-bleed artwork, one huge
+   title, black regardless of appearance. Sharing the HUD's chrome here made it
+   read as a spreadsheet of posters. */
+
+:root {
+  --bg:        #0a0a0c;
+  --bg-soft:   #101014;
+  --ink:       #ffffff;
+  --ink-dim:   rgba(255,255,255,.72);
+  --ink-mute:  rgba(255,255,255,.46);
+  --ink-faint: rgba(255,255,255,.28);
+  --line:      rgba(255,255,255,.10);
+  --line-hi:   rgba(255,255,255,.24);
+  --star:      #f5a524;
+  --glass:     rgba(20,20,24,.62);
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+
+  --dur: .28s;
+  --ease: cubic-bezier(.22,.61,.36,1);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+input { font: inherit; color: inherit; }
+
+::-webkit-scrollbar { width: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.14);
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.26); background-clip: padding-box; }
+
+#app { height: 100%; overflow-y: auto; overflow-x: hidden; scroll-behavior: smooth; }
+
+/* ============================================================
+   Floating dock — the only persistent chrome
+   ============================================================ */
+
+.dock {
+  position: fixed;
+  top: 60px; right: 24px;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  max-width: calc(100% - 36px);
+}
+
+.dock button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 15px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.dock button:hover { color: var(--ink); }
+.dock button.on { color: var(--ink); background: rgba(255,255,255,.13); }
+.dock button svg { width: 15px; height: 15px; flex: none; }
+
+.dock__sep { width: 1px; height: 20px; margin: 0 5px; background: var(--line); }
+
+.dock__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  transition: width var(--dur) var(--ease), background var(--dur) var(--ease);
+  width: 38px;
+}
+
+.dock__search.open { width: 230px; background: rgba(0,0,0,.42); }
+.dock__search svg { width: 15px; height: 15px; flex: none; color: var(--ink-mute); cursor: pointer; }
+.dock__search input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  border: 0;
+  outline: none;
+  background: none;
+  font-size: 13px;
+  color: var(--ink);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.dock__search.open input { opacity: 1; }
+.dock__search input::placeholder { color: var(--ink-faint); }
+
+/* ============================================================
+   Hero
+   ============================================================ */
+
+.hero {
+  position: relative;
+  height: clamp(430px, 72vh, 760px);
+  display: flex;
+  align-items: flex-end;
+  isolation: isolate;
+}
+
+/* Two stacked layers so a slide change crossfades instead of snapping. */
+.hero__bg {
+  position: absolute;
+  inset: 0;
+  background: center 18% / cover no-repeat;
+  opacity: 0;
+  transition: opacity .7s var(--ease);
+  z-index: -2;
+}
+.hero__bg.on { opacity: 1; }
+
+/* Vertical wash carries the artwork into the page; the horizontal one keeps
+   the copy readable when the backdrop is bright on the left. */
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 74% 28%, hsla(var(--hero-h, 38), 78%, 58%, .14), transparent 36%),
+    linear-gradient(90deg, rgba(10,10,12,.94) 0%, rgba(10,10,12,.72) 34%, rgba(10,10,12,.10) 68%, rgba(10,10,12,0) 100%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(10,10,12,.55) 34%, rgba(10,10,12,.10) 66%, rgba(10,10,12,.55) 100%);
+}
+
+.hero__body {
+  position: relative;
+  width: 100%;
+  max-width: 760px;
+  padding: 0 46px 52px;
+}
+
+.hero__kicker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 16px;
+}
+
+.hero__kicker .rule {
+  width: 64px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-hi), transparent);
+}
+
+.hero__title {
+  font-size: clamp(38px, 5.6vw, 74px);
+  font-weight: 800;
+  line-height: .96;
+  letter-spacing: -.035em;
+  margin-bottom: 18px;
+  text-wrap: balance;
+  text-shadow: 0 4px 40px rgba(0,0,0,.55);
+}
+
+.hero__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 11px;
+  font-size: 13.5px;
+  color: var(--ink-dim);
+  margin-bottom: 15px;
+}
+
+.hero__meta .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--ink-faint); }
+
+.star {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ink);
+}
+.star svg { width: 14px; height: 14px; color: var(--star); }
+
+.kind {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.hero__desc {
+  max-width: 60ch;
+  font-size: 15px;
+  line-height: 1.62;
+  color: var(--ink-dim);
+  margin-bottom: 28px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.hero__actions { display: flex; align-items: center; gap: 11px; }
+
+.btn-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 30px 14px 26px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #08080a;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  box-shadow: 0 6px 26px rgba(0,0,0,.45);
+}
+.btn-play:hover { transform: scale(1.035); box-shadow: 0 10px 34px rgba(255,255,255,.16); }
+.btn-play:active { transform: scale(.99); }
+.btn-play svg { width: 17px; height: 17px; }
+
+/* Round secondary actions, as on the reference — they carry a glyph, not a
+   label, so the eye goes to Play first. */
+.btn-round {
+  display: grid;
+  place-items: center;
+  width: 48px; height: 48px;
+  border: 1px solid var(--line-hi);
+  border-radius: 50%;
+  color: var(--ink);
+  background: rgba(255,255,255,.06);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.btn-round:hover { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.42); transform: scale(1.06); }
+.btn-round.on { background: var(--ink); color: #08080a; border-color: var(--ink); }
+.btn-round svg { width: 19px; height: 19px; }
+
+/* Slide pagination */
+.hero__dots {
+  position: absolute;
+  right: 46px;
+  bottom: 62px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* The bar you see is 3px; the thing you click is 22px tall.
+   As a bare 26x3 button this was a 78px2 target with 7px gaps — more dead
+   space between the dots than dot. The padding is transparent, so nothing
+   moves on screen. */
+.hero__dots button {
+  width: 26px; height: 22px;
+  display: grid; place-items: center;
+  background: none; padding: 0;
+}
+.hero__dots button::before {
+  content: "";
+  width: 100%; height: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,.24);
+  transition: background var(--dur) var(--ease), width var(--dur) var(--ease);
+}
+.hero__dots button:hover::before { background: rgba(255,255,255,.5); }
+.hero__dots button.on::before { width: 40px; background: var(--ink); }
+.hero__dots button.on { width: 40px; }
+
+/* ============================================================
+   Rails
+   ============================================================ */
+
+.rails { padding: 8px 0 60px; }
+
+.rail { margin-bottom: 40px; }
+
+.rail__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 46px;
+  margin-bottom: 16px;
+}
+
+.rail__index {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: .08em;
+  color: var(--ink-faint);
+}
+
+.rail__title {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  color: var(--ink);
+}
+
+.rail__rule { flex: 1; height: 1px; background: linear-gradient(90deg, var(--line), transparent); }
+
+/* The rail title is the way into the full list, so it has to look pressable
+   without becoming a second button competing with the arrows. */
+.rail__all {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 0; border: 0; background: none;
+  font: inherit; color: inherit; letter-spacing: inherit;
+  cursor: pointer;
+}
+.rail__all:hover { color: var(--star); }
+.rail__all:focus-visible { outline: 2px solid var(--star); outline-offset: 3px; border-radius: 4px; }
+.rail__chev {
+  opacity: 0; transform: translateX(-4px);
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.rail__all:hover .rail__chev, .rail__all:focus-visible .rail__chev {
+  opacity: 1; transform: translateX(0);
+}
+
+/* Sits in the results grid as its last cell. */
+.more {
+  grid-column: 1 / -1;
+  justify-self: center;
+  margin: 18px 0 4px;
+  padding: 11px 26px;
+  border: 1px solid var(--line-hi); border-radius: 999px;
+  background: transparent; color: var(--ink-dim);
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .1em;
+  text-transform: uppercase; cursor: pointer;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.more:hover { color: var(--ink); border-color: var(--star); }
+.more:focus-visible { outline: 2px solid var(--star); outline-offset: 2px; }
+
+.rail__nav { display: flex; gap: 6px; opacity: 0; transition: opacity var(--dur) var(--ease); }
+.rail:hover .rail__nav { opacity: 1; }
+
+.rail__nav button {
+  display: grid;
+  place-items: center;
+  width: 30px; height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--ink-dim);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.rail__nav button:hover { background: rgba(255,255,255,.12); color: var(--ink); }
+.rail__nav svg { width: 14px; height: 14px; }
+
+.rail__track {
+  display: flex;
+  gap: 14px;
+  padding: 6px 46px 14px;
+  /* Snapping ignores padding unless told otherwise: without this a card lands
+     flush against the scrollport edge and its left side is clipped, so the row
+     loses the gutter every other row keeps. Must track the padding above. */
+  scroll-padding-inline: 46px;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+.rail__track::-webkit-scrollbar { display: none; }
+
+/* ============================================================
+   Poster card
+   ============================================================ */
+
+.card {
+  position: relative;
+  flex: none;
+  width: 168px;
+  scroll-snap-align: start;
+  cursor: pointer;
+}
+
+.card--reorder { cursor: grab; }
+.card--reorder:active { cursor: grabbing; }
+.card--reorder.dragging { opacity: .32; }
+.card--reorder.drop-before .card__art { box-shadow: -5px 0 0 var(--star), 0 18px 40px rgba(0,0,0,.62); }
+.card--reorder.drop-after .card__art { box-shadow: 5px 0 0 var(--star), 0 18px 40px rgba(0,0,0,.62); }
+
+.card__hero-slot {
+  position: absolute;
+  top: 8px; left: 8px;
+  z-index: 2;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(8,8,10,.82);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: .09em;
+  color: var(--star);
+}
+
+.card__art {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.card:hover .card__art,
+.card:focus-visible .card__art {
+  transform: translateY(-6px) scale(1.035);
+  border-color: var(--line-hi);
+  box-shadow: 0 18px 40px rgba(0,0,0,.62);
+}
+
+.card__art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.card__rating {
+  position: absolute;
+  top: 8px; right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(8,8,10,.78);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 600;
+}
+.card__rating svg { width: 11px; height: 11px; color: var(--star); }
+
+/* Play affordance, revealed on hover so the resting grid stays quiet. */
+.card__veil {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(0deg, rgba(8,8,10,.86) 0%, rgba(8,8,10,.15) 60%, transparent 100%);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.card:hover .card__veil { opacity: 1; }
+
+.card__play {
+  display: grid;
+  place-items: center;
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.94);
+  color: #08080a;
+  transform: scale(.82);
+  transition: transform var(--dur) var(--ease);
+}
+.card:hover .card__play { transform: scale(1); }
+.card__play svg { width: 15px; height: 15px; margin-left: 2px; }
+
+.card__label { padding: 10px 2px 0; }
+
+.card__name {
+  font-size: 13.5px;
+  font-weight: 550;
+  letter-spacing: -.01em;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--dur) var(--ease);
+}
+.card:hover .card__name { color: var(--ink); }
+
+.card__sub {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .06em;
+  color: var(--ink-faint);
+}
+
+/* Rank numeral for the Top 10 rail — oversized, clipped by the card, the way
+   every streaming service marks a countdown. */
+.card--ranked { padding-left: 34px; width: 202px; }
+
+.card__rank {
+  position: absolute;
+  left: -8px; bottom: 30px;
+  z-index: 1;
+  font-size: 88px;
+  font-weight: 800;
+  line-height: .8;
+  letter-spacing: -.06em;
+  color: #14141a;
+  -webkit-text-stroke: 2px rgba(255,255,255,.30);
+  pointer-events: none;
+}
+
+/* ============================================================
+   Search results grid
+   ============================================================ */
+
+/* Clears the floating dock rather than starting underneath it.
+   The dock is fixed at top:60px and stands about 44px tall, so its lower edge
+   lands near 104px — six pixels past where this used to begin, which is why
+   "My Library" sat tucked under it. On Home the dock floating over the hero is
+   deliberate; on these views there is no art for it to float over. */
+.results { padding: 128px 46px 60px; }
+
+.results__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.results__title { font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
+.results__count { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+
+.library-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -8px 0 24px;
+}
+
+.library-tools__tabs { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+
+.library-tools__new {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.library-tools__new svg { width: 14px; height: 14px; }
+
+.library-tools__hint {
+  flex-basis: 100%;
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  color: var(--ink-faint);
+}
+.library-tools__hint::before { content: '↕ '; color: var(--star); }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 22px 16px;
+}
+.grid .card { width: auto; }
+
+.empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 70px 20px;
+  text-align: center;
+}
+.empty__mark { font-size: 30px; opacity: .3; }
+.empty__title { font-size: 16px; font-weight: 600; }
+.empty__body { max-width: 46ch; font-size: 13.5px; line-height: 1.6; color: var(--ink-mute); }
+.empty__body code { font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
+
+/* Skeletons keep the rail's footprint while a fetch is in flight. */
+.skel { flex: none; width: 168px; }
+.skel__art { aspect-ratio: 2/3; border-radius: 10px; background: #131318; }
+.skel__line { height: 9px; margin-top: 10px; border-radius: 4px; background: #131318; }
+.skel__line + .skel__line { width: 52%; height: 7px; margin-top: 7px; }
+.skel { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .42 } }
+
+/* ============================================================
+   Player
+   ============================================================ */
+
+.veil {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 24px 24px;
+  background: rgba(4,4,6,.86);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.veil.on { display: flex; animation: fade .22s var(--ease); }
+@keyframes fade { from { opacity: 0 } to { opacity: 1 } }
+
+.sheet {
+  --ambient-h: 38;
+  width: min(1120px, 100%);
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background:
+    radial-gradient(900px 420px at 18% 0%, hsla(var(--ambient-h), 72%, 55%, .12), transparent 58%),
+    radial-gradient(700px 360px at 88% 30%, hsla(calc(var(--ambient-h) + 42), 65%, 48%, .08), transparent 62%),
+    #0c0c10;
+  box-shadow: 0 40px 100px rgba(0,0,0,.8);
+}
+
+.sheet__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 13px 14px 13px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sheet__title {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -.015em;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sheet__spacer { flex: 1; }
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  color: var(--ink-mute);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.icon-btn:hover { background: rgba(255,255,255,.1); color: var(--ink); }
+.icon-btn.on { color: var(--ink); background: rgba(255,255,255,.1); }
+#sheetFavorite.on svg, #sheetSave.on svg { fill: currentColor; }
+.icon-btn svg { width: 16px; height: 16px; }
+
+.player { position: relative; height: min(56.25vw, 58vh, 630px); background: #000; flex: none; }
+.player video {
+  width: 100%; height: 100%;
+  display: block;
+  background: #000;
+  object-fit: contain;
+}
+
+/* Where a title legally streams, from TMDB. */
+.providers {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  margin-top: 18px; padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.providers__label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.provider {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  text-decoration: none;
+  transition: color var(--dur) var(--ease);
+}
+.provider:hover { color: var(--ink-dim); text-decoration: underline; }
+.provider:not(:last-child)::after { content: ","; color: var(--ink-faint); }
+
+.player iframe { width: 100%; height: 100%; border: 0; display: block; }
+
+/* ---------- ATLAS video controls ---------- */
+/* One bar for every source that plays natively, so the Archive and your server
+   look the same. Sits over the video, fades with the pointer. */
+.vc {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 28px 14px 10px;
+  background: linear-gradient(to top, rgba(0,0,0,.86) 18%, rgba(0,0,0,.42) 62%, transparent);
+  opacity: 0; transition: opacity var(--dur) var(--ease);
+  pointer-events: none;
+  font-family: var(--sans);
+}
+.player:hover .vc, .vc.is-shown, .vc:focus-within { opacity: 1; pointer-events: auto; }
+
+.vc__scrub {
+  position: relative; height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,.20);
+  cursor: pointer; margin-bottom: 10px;
+}
+/* A 4px bar is a small target, so the grab area is taller than the paint. */
+.vc__scrub::before { content: ''; position: absolute; inset: -8px 0; }
+.vc__buffer, .vc__played {
+  position: absolute; top: 0; bottom: 0; left: 0; border-radius: 2px;
+}
+.vc__buffer { background: rgba(255,255,255,.26); width: 0; }
+.vc__played { background: var(--star); width: 0; }
+.vc__knob {
+  position: absolute; top: 50%; left: 0; width: 11px; height: 11px;
+  margin: -5.5px 0 0 -5.5px; border-radius: 50%; background: var(--star);
+  transform: scale(0); transition: transform .16s var(--ease);
+}
+.vc__scrub:hover .vc__knob, .vc__scrub:focus-visible .vc__knob { transform: scale(1); }
+.vc__scrub:focus-visible { outline: 2px solid var(--star); outline-offset: 4px; }
+
+.vc__row { display: flex; align-items: center; gap: 4px; }
+.vc__btn {
+  display: grid; place-items: center;
+  width: 32px; height: 32px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent;
+  color: var(--ink); cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.vc__btn svg { width: 19px; height: 19px; }
+.vc__btn:hover { background: rgba(255,255,255,.12); }
+.vc__btn:focus-visible { outline: 2px solid var(--star); outline-offset: 2px; }
+.vc__btn--play svg { width: 22px; height: 22px; }
+.vc__btn--text {
+  width: auto; padding: 0 9px;
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em;
+}
+
+.vc__vol {
+  width: 0; opacity: 0;
+  accent-color: var(--star);
+  transition: width var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+/* The slider stays out of the way until the volume area is actually in use. */
+.vc__row:hover .vc__vol, .vc__vol:focus-visible { width: 68px; opacity: 1; }
+
+.vc__time {
+  font-family: var(--mono); font-size: 11.5px;
+  color: var(--ink-dim); margin-left: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.vc__spacer { flex: 1; }
+
+.player.is-idle { cursor: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .vc, .vc__knob, .vc__vol, .vc__btn { transition: none; }
+}
+
+.sheet__body { overflow-y: auto; min-height: 0; padding: 18px 20px 24px; }
+
+
+
+/* Two groups on one line, each wrapping as a unit.
+   Previously one flat row of label + nine sources + spacer + three buttons:
+   when it ran out of width it broke wherever it happened to land, which put
+   Reload and Not working alone on a second line, away from both the picker
+   and the player they act on. */
+.sources {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px 18px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.sources__pick {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 420px;
+}
+.sources__acts {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+/* Recovery sits next to the picker it re-tries; Drive Sync is a different job,
+   so it gets air rather than sitting in the same run of buttons. */
+
+.sources__label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-right: 6px;
+}
+
+.chip {
+  /* 8px vertical keeps a 12px chip at ~29px tall; at 6px it sat just under
+     the 24px a pointer can reliably hit, and the source row has ten of them. */
+  padding: 8px 14px;
+  /* A pill is sized by its label; letting the label wrap inside it produces a
+     four-line blob rather than a button. */
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-mute);
+  transition: all var(--dur) var(--ease);
+}
+.chip:hover { color: var(--ink); border-color: var(--line-hi); }
+.chip.on { background: var(--ink); color: #08080a; border-color: var(--ink); font-weight: 600; }
+
+/* Player state overlay — the iframe is opaque, so this is the only place the
+   page can say anything about what is happening inside it. */
+.pstate {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #08080a;
+  text-align: center;
+}
+.pstate.fading { opacity: 0; transition: opacity .3s var(--ease); pointer-events: none; }
+
+.pstate__inner { max-width: 44ch; }
+
+.spinner {
+  width: 34px; height: 34px;
+  margin: 0 auto 16px;
+  border: 2px solid rgba(255,255,255,.14);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.pstate__mark { font-size: 26px; margin-bottom: 12px; }
+
+.pstate__title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -.015em;
+  margin-bottom: 7px;
+}
+
+.pstate__body { font-size: 13px; line-height: 1.6; color: var(--ink-mute); }
+
+.pstate__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.pstate__log {
+  margin-top: 16px;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(0,0,0,.5);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--ink-mute);
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+/* Was dashed AND --ink-faint (.28 white, roughly 3:1 on this ground) — two
+   ways of saying "secondary" at once, which added up to unreadable. Dashed
+   alone carries it; the text has to be legible because Not working is the
+   control you need when the player has just failed. */
+.chip--quiet { border-style: dashed; color: var(--ink-mute); }
+.chip--quiet:hover { color: var(--ink); border-color: var(--line-hi); }
+
+/* A source the page has seen work for this title before. */
+.chip__mark { color: var(--star); margin-right: 5px; font-size: 10px; }
+.chip.on .chip__mark { color: #08080a; }
+.chip--dead { opacity: .34; text-decoration: line-through; }
+
+/* Renaming in place: the input inherits the pill's type so the chip does not
+   change size or jump position while it is being edited. */
+.chip__rename {
+  width: 8.5ch;
+  min-width: 60px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  outline: none;
+}
+.chip__rename::selection { background: rgba(255,255,255,.28); }
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: -6px 0 16px;
+  padding: 9px 13px;
+  border: 1px solid rgba(245,165,36,.28);
+  border-radius: 10px;
+  background: rgba(245,165,36,.07);
+  font-size: 12.5px;
+  color: var(--ink-dim);
+}
+.hint button { text-decoration: underline; color: var(--ink); font-size: 12.5px; }
+
+.overview { max-width: 80ch; font-size: 13.5px; line-height: 1.68; color: var(--ink-mute); }
+
+/* Tabs read as tabs. As pills they looked identical to the source picker
+   above and the metadata below — three rows of the same shape meaning three
+   different things. */
+.detail-tabs {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  padding: 10px 14px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  font-size: 12.5px; font-weight: 500;
+  color: var(--ink-mute);
+  background: none;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.tab:hover { color: var(--ink-dim); }
+.tab.on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+.detail-panel[hidden] { display: none; }
+
+.fact-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+             margin: 0 0 14px; }
+/* Facts are text, not controls. Pill-shaped and sitting under two rows of
+   real pills, "105 min" and "Thriller" looked like buttons that did nothing
+   when clicked. */
+.fact {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+.fact + .fact::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--ink-faint);
+}
+
+.section-head { display: flex; align-items: baseline; gap: 10px; margin: 22px 0 12px; }
+.section-head h3 { font-size: 15px; font-weight: 650; }
+.section-head span { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+
+.media-strip, .cast-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.media-card, .cast-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255,255,255,.035);
+  text-align: left;
+  transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.media-card:hover, .cast-card:hover { transform: translateY(-2px); border-color: var(--line-hi); background: rgba(255,255,255,.065); }
+.media-card__art { position: relative; aspect-ratio: 16/9; background: #09090c center/cover no-repeat; }
+.media-card__art::after { content: '▶'; position: absolute; inset: 0; display: grid; place-items: center; font-size: 21px; color: white; background: rgba(0,0,0,.25); }
+.media-card__body { padding: 10px 11px 12px; }
+.media-card__type { font-family: var(--mono); font-size: 9px; letter-spacing: .1em; color: var(--star); text-transform: uppercase; }
+.media-card__title { margin-top: 4px; font-size: 12.5px; font-weight: 600; line-height: 1.35; }
+
+.cast-card { display: flex; align-items: center; gap: 11px; padding: 8px; }
+.cast-card img { width: 52px; height: 66px; border-radius: 8px; object-fit: cover; background: #17171c; }
+.cast-card__name { font-size: 12.5px; font-weight: 600; }
+.cast-card__role { margin-top: 3px; font-size: 10.5px; color: var(--ink-faint); }
+
+.ep { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; padding: 8px; }
+.ep__still { width: 112px; aspect-ratio: 16/9; border-radius: 7px; object-fit: cover; background: #17171c; }
+.ep__meta { margin-top: 5px; font-family: var(--mono); font-size: 9.5px; color: var(--ink-faint); }
+
+.person-veil { position: fixed; inset: 0; z-index: 95; display: none; place-items: center; padding: 24px; background: rgba(4,4,6,.82); backdrop-filter: blur(14px); }
+.person-veil.on { display: grid; animation: fade .18s var(--ease); }
+.person-card { width: min(760px, 100%); max-height: 82vh; overflow-y: auto; padding: 22px; border: 1px solid var(--line-hi); border-radius: 16px; background: radial-gradient(500px 260px at 10% 0%, hsla(var(--ambient-h, 38),70%,55%,.12), transparent 65%), #111116; }
+.person-card__head { display: flex; gap: 18px; }
+.person-card__head img { width: 116px; height: 154px; border-radius: 12px; object-fit: cover; background: #18181d; }
+.person-card__name { font-size: 24px; font-weight: 750; letter-spacing: -.025em; }
+.person-card__facts { margin-top: 8px; font-size: 12px; line-height: 1.6; color: var(--ink-mute); }
+.person-card__bio { margin-top: 18px; font-size: 13px; line-height: 1.68; color: var(--ink-dim); white-space: pre-line; }
+
+.title-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 12px; }
+.mini-title { min-width: 0; text-align: left; }
+.mini-title img { width: 100%; aspect-ratio: 2/3; display: block; object-fit: cover; border: 1px solid var(--line); border-radius: 9px; background: #17171c; transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.mini-title:hover img { transform: translateY(-3px); border-color: var(--line-hi); }
+.mini-title__name { display: block; margin-top: 7px; font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-title__meta { display: block; margin-top: 2px; font-family: var(--mono); font-size: 9px; color: var(--ink-faint); }
+
+.eps__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 24px 0 12px;
+}
+
+.eps__title { font-size: 15px; font-weight: 650; letter-spacing: -.015em; }
+
+select.season {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #15151b;
+  color: var(--ink);
+  font-size: 12.5px;
+  outline: none;
+  cursor: pointer;
+}
+
+.eps { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 9px; }
+
+.ep {
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.ep:hover { background: rgba(255,255,255,.05); border-color: var(--line-hi); }
+.ep.on { background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.4); }
+
+.ep__name { font-size: 13px; font-weight: 550; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep__no { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-right: 7px; }
+.ep__desc {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ============================================================
+   Toast
+   ============================================================ */
+
+.toast {
+  position: fixed;
+  bottom: 26px; left: 50%;
+  transform: translate(-50%, 12px);
+  z-index: 80;
+  padding: 11px 20px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(18,18,22,.96);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 14px 40px rgba(0,0,0,.6);
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+.toast.bad { border-color: rgba(255,69,58,.5); color: #ff645a; }
+
+/* ============================================================
+   Google Drive Sync Progress Dock
+   ============================================================ */
+
+@keyframes driveSlideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================================
+   Playlist picker
+   ============================================================ */
+
+.playlist-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: none;
+  place-items: center;
+  padding: 60px 24px 24px;
+  background: rgba(4,4,6,.78);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.playlist-veil.on { display: grid; animation: fade .18s var(--ease); }
+
+.playlist-dialog {
+  width: min(420px, 100%);
+  padding: 22px;
+  border: 1px solid var(--line-hi);
+  border-radius: 16px;
+  background: #111116;
+  box-shadow: 0 30px 80px rgba(0,0,0,.72);
+}
+
+.playlist-dialog__head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.playlist-dialog__title { font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
+.playlist-dialog__hint { margin-bottom: 17px; font-size: 12.5px; line-height: 1.5; color: var(--ink-mute); }
+
+.jf-form { display: grid; gap: 11px; }
+.jf-label { display: grid; gap: 5px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); font-family: var(--mono); }
+.jf-label input {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(0,0,0,.4);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+  letter-spacing: normal;
+  text-transform: none;
+  outline: none;
+}
+.jf-label input:focus { border-color: var(--line-hi); }
+.jf-actions { display: flex; gap: 8px; margin-top: 4px; }
+.jf-status { min-height: 16px; font-size: 12px; line-height: 1.5; color: var(--ink-mute); }
+.jf-status.bad { color: #ff645a; }
+.jf-status.ok { color: #4ade80; }
+
+.playlist-options { display: grid; gap: 7px; margin-bottom: 16px; }
+.playlist-option {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink-dim);
+  text-align: left;
+}
+.playlist-option:hover { border-color: var(--line-hi); color: var(--ink); background: rgba(255,255,255,.04); }
+.playlist-option.on { border-color: rgba(255,255,255,.34); color: var(--ink); background: rgba(255,255,255,.08); }
+.playlist-option__mark {
+  display: grid;
+  place-items: center;
+  width: 20px; height: 20px;
+  border: 1px solid var(--line-hi);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.playlist-option.on .playlist-option__mark { background: var(--ink); color: #08080a; border-color: var(--ink); }
+.playlist-option__name { flex: 1; font-size: 13.5px; font-weight: 550; }
+.playlist-option__count { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+
+.playlist-create { display: flex; gap: 8px; padding-top: 15px; border-top: 1px solid var(--line); }
+.playlist-create input {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  outline: none;
+  background: rgba(0,0,0,.35);
+}
+.playlist-create input:focus { border-color: var(--line-hi); }
+.playlist-create button { padding: 0 16px; border-radius: 9px; background: var(--ink); color: #08080a; font-weight: 650; }
+
+/* The pane gets narrow in a split layout; the hero is what suffers first. */
+@media (max-width: 860px) {
+  .hero__body, .rail__head, .rail__track, .results { padding-left: 26px; padding-right: 26px; }
+  .rail__track { scroll-padding-inline: 26px; }
+  .hero__dots { right: 26px; }
+  .hero { height: clamp(350px, 62vh, 560px); }
+  .dock button { padding-left: 11px; padding-right: 11px; }
+  .veil { padding: 12px; }
+  .sheet { max-height: calc(100vh - 24px); }
+}
+
+@media (max-width: 680px) {
+  .dock__label { display: none; }
+  .dock__search.open { width: min(190px, calc(100vw - 210px)); }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+}
+
+@media (max-height: 700px) {
+  .hero { height: max(340px, 68vh); }
+  .hero__body { padding-bottom: 28px; }
+  .hero__title { font-size: clamp(34px, 5vw, 56px); margin-bottom: 13px; }
+  .hero__desc { -webkit-line-clamp: 2; margin-bottom: 20px; }
+  .hero__dots { bottom: 38px; }
+  .player { height: min(50vh, 440px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  #app, .rail__track { scroll-behavior: auto; }
+}
+
+/* Wide screens: controls beside the player, not crushed under it.
+   Stacked, the player took every pixel its 630px cap allowed and left the
+   source picker, tabs, facts and overview fighting over a strip at the bottom
+   — on a large display the thing you are reading ended up furthest from your
+   eyes and usually below the fold. Grid areas rather than new markup, so the
+   narrow layout below is still the same document in the same order. */
+@media (min-width: 1024px) {
+  .sheet {
+    width: min(1560px, 100%);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(360px, 26vw, 420px);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "bar  bar"
+      "play rail";
+  }
+  .sheet__bar { grid-area: bar; }
+
+  /* Fills its cell and keeps 16:9 rather than a viewport-derived height. */
+  .player {
+    grid-area: play;
+    height: auto;
+    min-height: 0;
+    align-self: stretch;
+  }
+
+  .sheet__body {
+    grid-area: rail;
+    border-left: 1px solid var(--line);
+    padding: 20px 22px 28px;
+  }
+
+  /* One narrow column: the picker stacks under its label and the actions sit
+     below it rather than being pushed off the right edge. */
+  .sources {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 14px;
+  }
+  /* The base rule's `flex: 1 1 420px` is a *height* once this column turns
+     vertical, which is where the 420px hole between the label and the pills
+     came from. */
+  .sources__pick { flex: 0 0 auto; align-content: flex-start; }
+  .sources__acts { justify-content: flex-start; }
+
+  /* Tabs would otherwise wrap to three lines at this width. */
+  /* Five tabs in a ~370px rail. Tighter than the wide layout, and scrolling
+     sideways rather than wrapping: at some widths "Related" dropped to a
+     second line and left a stray tab under a full row. Scroll holds at every
+     width instead of only the ones that were measured. */
+  .detail-tabs {
+    gap: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .detail-tabs::-webkit-scrollbar { display: none; }
+  .tab { padding: 10px 7px; font-size: 11.5px; flex: 0 0 auto; }
+
+  /* Title on its own line, controls under it. The spacer is a wide-layout
+     device — in a narrow column it shoved the season picker against the edge
+     and squeezed the sync button until its label wrapped. */
+  .eps__head { gap: 10px 8px; }
+  .eps__head .sheet__spacer { display: none; }
+  .eps__title { flex: 1 0 100%; }
+  .season { flex: 0 1 auto; min-width: 0; }
+}
+</style>
+</head>
+<body>
+
+<nav class="dock">
+  <button data-tab="home" class="on">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/></svg>
+    <span class="dock__label">Home</span>
+  </button>
+  <button data-tab="movie">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="14" rx="2"/><path d="M2.5 10h19M7 6l2 4M13 6l2 4"/></svg>
+    <span class="dock__label">Movies</span>
+  </button>
+  <button data-tab="tv">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="12" rx="2"/><path d="M8 21h8M9 3l3 3.5L15 3"/></svg>
+    <span class="dock__label">Shows</span>
+  </button>
+  <button data-tab="library">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h12v17l-6-4.2-6 4.2z"/></svg>
+    <span class="dock__label">Library</span>
+  </button>
+
+  <button data-tab="server" id="serverBtn" title="Your media server">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
+    Server
+  </button>
+
+
+  <div class="dock__sep"></div>
+
+  <div class="dock__search" id="searchBox">
+    <svg id="searchIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+    <input id="search" placeholder="Search films and shows" spellcheck="false" aria-label="Search">
+  </div>
+</nav>
+
+<div id="app">
+  <section class="hero" id="hero" hidden>
+    <div class="hero__bg" id="bgA"></div>
+    <div class="hero__bg" id="bgB"></div>
+
+    <div class="hero__body">
+      <div class="hero__kicker">
+        <span id="heroKicker">FEATURED 01 / 06</span>
+        <span class="rule"></span>
+      </div>
+      <h1 class="hero__title" id="heroTitle"></h1>
+      <div class="hero__meta">
+        <span class="star" id="heroRating"></span>
+        <span class="dot"></span>
+        <span id="heroYear"></span>
+        <span class="dot"></span>
+        <span class="kind" id="heroKind"></span>
+      </div>
+      <p class="hero__desc" id="heroDesc"></p>
+      <div class="hero__actions">
+        <button class="btn-play" id="heroPlay">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>
+          Play
+        </button>
+        <button class="btn-round" id="heroSave" aria-label="Add to Watch Later" title="Add to Watch Later">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button class="btn-round" id="heroInfo" aria-label="More info" title="More info">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.8v.2"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="hero__dots" id="heroDots"></div>
+  </section>
+
+  <main class="rails" id="rails"></main>
+  <main class="results" id="results" hidden>
+    <div class="results__head">
+      <h2 class="results__title" id="resultsTitle"></h2>
+      <span class="results__count" id="resultsCount"></span>
+    </div>
+    <div class="library-tools" id="libraryTools" hidden>
+      <div class="library-tools__tabs" id="libraryTabs"></div>
+      <button class="chip library-tools__new" id="newPlaylist">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        New playlist
+      </button>
+      <p class="library-tools__hint" id="libraryHint" hidden>Drag Favorites to choose the six titles featured on Home.</p>
+    </div>
+    <div class="grid" id="resultsGrid"></div>
+  </main>
+</div>
+
+<div class="veil" id="veil">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet__bar">
+      <span class="sheet__title" id="sheetTitle"></span>
+      <div class="sheet__spacer"></div>
+      <button class="icon-btn" id="sheetFavorite" aria-label="Add to favorites" title="Add to favorites">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
+      </button>
+      <button class="icon-btn" id="sheetSave" aria-label="Add to Watch Later" title="Add to Watch Later">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M6 3.5h12v17l-6-4.2-6 4.2z"/></svg>
+      </button>
+      <button class="icon-btn" id="sheetPlaylist" aria-label="Add to playlist" title="Add to playlist">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6h10M4 12h10M4 18h7M18 14v7M14.5 17.5h7"/></svg>
+      </button>
+      <button class="icon-btn" id="sheetClose" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="player" id="player">
+      <iframe id="frame" allowfullscreen allow="autoplay; encrypted-media"></iframe>
+      <video id="nvideo" playsinline hidden></video>
+
+      <!-- ATLAS's own controls, for the sources that play in our <video>: the
+           Archive and your server. An embed source renders its provider's player
+           inside a cross-origin iframe, which nothing here can reach or restyle,
+           so this bar stays hidden for those. -->
+      <div class="vc" id="vc" hidden>
+        <div class="vc__scrub" id="vcScrub" role="slider" aria-label="Seek"
+             tabindex="0" aria-valuemin="0" aria-valuenow="0">
+          <div class="vc__buffer" id="vcBuffer"></div>
+          <div class="vc__played" id="vcPlayed"></div>
+          <div class="vc__knob" id="vcKnob"></div>
+        </div>
+        <div class="vc__row">
+          <button class="vc__btn vc__btn--play" id="vcPlay" aria-label="Play">
+            <svg viewBox="0 0 24 24" id="vcPlayIcon" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+          <button class="vc__btn" id="vcBack" aria-label="Back 10 seconds">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17l-5-5 5-5"/><path d="M18 17l-5-5 5-5"/></svg>
+          </button>
+          <button class="vc__btn" id="vcFwd" aria-label="Forward 10 seconds">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 17l5-5-5-5"/><path d="M6 17l5-5-5-5"/></svg>
+          </button>
+          <button class="vc__btn" id="vcMute" aria-label="Mute">
+            <svg viewBox="0 0 24 24" id="vcMuteIcon" fill="currentColor"><path d="M4 9v6h4l5 5V4L8 9H4z"/><path d="M16.5 12a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+          </button>
+          <input class="vc__vol" id="vcVol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume">
+          <span class="vc__time" id="vcTime">0:00 / 0:00</span>
+          <span class="vc__spacer"></span>
+          <button class="vc__btn vc__btn--text" id="vcRate" aria-label="Playback speed">1×</button>
+          <button class="vc__btn" id="vcCC" aria-label="Subtitles" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 11h2M8 14h5M14 11h2"/></svg>
+          </button>
+          <button class="vc__btn" id="vcPiP" aria-label="Picture in picture">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1" fill="currentColor"/></svg>
+          </button>
+          <button class="vc__btn" id="vcFull" aria-label="Fullscreen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="pstate" id="pstate" hidden>
+        <div class="pstate__inner">
+          <div class="spinner" id="pspin"></div>
+          <div class="pstate__mark" id="pmark" hidden></div>
+          <div class="pstate__title" id="ptitle"></div>
+          <div class="pstate__body" id="pbody"></div>
+          <div class="pstate__actions" id="pactions"></div>
+          <pre class="pstate__log" id="plog" hidden></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet__body">
+      <!--
+        Three jobs, three groups, rather than one flex row holding all of them.
+        As a single row it wrapped wherever it ran out of width, which stranded
+        Reload and Not working on a line of their own — the two controls you
+        need at exactly the moment the player has failed.
+      -->
+      <div class="sources">
+        <div class="sources__pick">
+          <span class="sources__label">Source</span>
+          <span id="sources"></span>
+        </div>
+        <div class="sources__acts">
+          <button class="chip chip--quiet" id="srcReload" title="Reload this player">Reload</button>
+          <button class="chip chip--quiet" id="srcBad" title="Mark broken and try the next source">Not working</button>
+        </div>
+      </div>
+
+      <!-- Tabs, not pills: they switch what is below rather than doing something. -->
+      <div class="detail-tabs" id="detailTabs" role="tablist">
+        <button class="tab on" role="tab" data-detail="details">Details</button>
+        <button class="tab" role="tab" data-detail="episodes" id="episodesTab">Episodes</button>
+        <button class="tab" role="tab" data-detail="extras">Trailers &amp; Extras</button>
+        <button class="tab" role="tab" data-detail="cast">Cast</button>
+        <button class="tab" role="tab" data-detail="related">Related</button>
+      </div>
+
+      <section class="detail-panel" data-panel="details">
+        <div class="fact-row" id="facts"></div>
+        <p class="overview" id="overview"></p>
+        <div class="providers" id="providers" hidden></div>
+      </section>
+
+      <section class="detail-panel" data-panel="episodes" id="tvControls" hidden>
+        <div class="eps__head">
+          <span class="eps__title">Episodes</span>
+          <div class="sheet__spacer"></div>
+          <select class="season" id="seasonSelect" aria-label="Season"></select>
+        </div>
+        <div class="eps" id="eps"></div>
+      </section>
+
+      <section class="detail-panel" data-panel="extras" hidden>
+        <div class="section-head"><h3>Trailers, previews & interviews</h3><span id="extrasCount"></span></div>
+        <div class="media-strip" id="extras"></div>
+      </section>
+
+      <section class="detail-panel" data-panel="cast" hidden>
+        <div class="section-head"><h3>Cast</h3><span id="castCount"></span></div>
+        <div class="cast-strip" id="cast"></div>
+      </section>
+
+      <section class="detail-panel" data-panel="related" hidden>
+        <div class="section-head"><h3>More like this</h3><span id="relatedCount"></span></div>
+        <div class="title-strip" id="related"></div>
+      </section>
+    </div>
+  </div>
+<!--
+  The floating Cloud Sync button lived here: position:fixed, z-index 8000,
+  bottom-left. It sat on top of every surface including this sheet's own
+  overview text, and it was the third way into the same modal — the nav's
+  Cloud Sync button and the sheet's Drive Sync chip both already open it.
+-->
+
+<div class="playlist-veil" id="playlistVeil">
+  <div class="playlist-dialog" role="dialog" aria-modal="true" aria-labelledby="playlistTitle">
+    <div class="playlist-dialog__head">
+      <h2 class="playlist-dialog__title" id="playlistTitle">Add to playlist</h2>
+      <div class="sheet__spacer"></div>
+      <button class="icon-btn" id="playlistClose" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <p class="playlist-dialog__hint" id="playlistHint">Choose any playlists for this title.</p>
+    <div class="playlist-options" id="playlistOptions"></div>
+    <form class="playlist-create" id="playlistCreate">
+      <input id="playlistName" maxlength="48" placeholder="New playlist name" aria-label="New playlist name">
+      <button type="submit">Create</button>
+    </form>
+  </div>
+</div>
+
+<div class="playlist-veil" id="jfVeil">
+  <div class="playlist-dialog" role="dialog" aria-modal="true" aria-labelledby="jfTitle">
+    <div class="playlist-dialog__head">
+      <h2 class="playlist-dialog__title" id="jfTitle">Connect your server</h2>
+      <div class="sheet__spacer"></div>
+      <button class="icon-btn" id="jfClose" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <p class="playlist-dialog__hint" id="jfHint">Jellyfin holds your own media. Once connected, your library appears on Home and plays in ATLAS with resume.</p>
+    <form class="jf-form" id="jfForm">
+      <label class="jf-label">Server<input id="jfUrl" value="http://localhost:8096" spellcheck="false" autocomplete="off"></label>
+      <label class="jf-label">Username<input id="jfUser" spellcheck="false" autocomplete="username"></label>
+      <label class="jf-label">Password<input id="jfPass" type="password" autocomplete="current-password"></label>
+      <div class="jf-actions">
+        <button type="submit" class="chip" id="jfConnect">Connect</button>
+        <button type="button" class="chip chip--ghost" id="jfForget" hidden>Disconnect</button>
+      </div>
+      <p class="jf-status" id="jfStatus"></p>
+    </form>
+  </div>
+</div>
+
+<div class="person-veil" id="personVeil">
+  <article class="person-card" role="dialog" aria-modal="true" aria-labelledby="personName">
+    <div class="playlist-dialog__head">
+      <div class="sheet__spacer"></div>
+      <button class="icon-btn" id="personClose" aria-label="Close cast details">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div class="person-card__head">
+      <img id="personPhoto" alt="">
+      <div>
+        <h2 class="person-card__name" id="personName"></h2>
+        <div class="person-card__facts" id="personFacts"></div>
+      </div>
+    </div>
+    <p class="person-card__bio" id="personBio"></p>
+    <div class="section-head"><h3>Known for & other work</h3><span id="personCreditsCount"></span></div>
+    <div class="title-strip" id="personCredits"></div>
+  </article>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+'use strict';
+
+window.onerror = function(msg, url, line, col, error) {
+  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.atlasBridge) {
+    window.webkit.messageHandlers.atlasBridge.postMessage({ action: 'log', message: 'JS ERROR: ' + msg + ' @ ' + line + ':' + col });
+  }
+};
+
+/* ---------- durable storage ---------- *
+
+  Cinema's library, progress and settings live in ATLAS's encrypted SQLite
+  database, reached through the bridge. They used to live only in localStorage,
+  which WebKit partitions by the app's bundle identifier — so the one time ATLAS
+  ran as a bare executable with no identifier, the page was handed a different,
+  empty container and a 48-title library looked deleted. Nothing had been lost,
+  but a store that disappears when the process identity changes is not a store,
+  and it sat outside every backup a person would think to make.
+
+  localStorage is kept, demoted to a boot cache: it is synchronous, so the first
+  paint has the library already rather than flashing empty while Swift answers.
+  The database is the copy that survives.                                     */
+
+const CINEMA_KEYS = ['atlas_cinema_library_v1', 'atlas_cinema_progress',
+                     'atlas_cinema_sources', 'atlas_cinema_source',
+                     'atlas_jellyfin_v1', 'atlas_device', 'atlas_tmdb_key',
+                     'atlas_cinema_source_names'];
+
+function toBridge(message) {
+  if (window.webkit && window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.atlasBridge) {
+    window.webkit.messageHandlers.atlasBridge.postMessage(message);
+    return true;
+  }
+  return false;
+}
+
+/* Same shape as localStorage, so call sites read the same. Writes go to both:
+   the cache for the next boot, the database to actually keep it. */
+const cinemaStore = {
+  getItem(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  },
+  setItem(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) {}
+    toBridge({ action: 'saveState', key: key, value: value });
+  },
+  removeItem(key) {
+    try { localStorage.removeItem(key); } catch (e) {}
+    // No value means remove — an empty string is a real value, not a delete.
+    toBridge({ action: 'saveState', key: key });
+  }
+};
+
+/* Called by Swift once the page has loaded. */
+window.atlasCinemaState = function (json) {
+  let payload;
+  try { payload = JSON.parse(json); } catch (e) { return; }
+
+  if (!payload.ok) {
+    console.error('[cinema] store unavailable:', payload.message);
+    return;
+  }
+
+  // The key is held in the Keychain and handed over here, so it is never in
+  // this file. An explicit atlas_tmdb_key still wins, for a dev run.
+  if (payload.tmdbKey && !cinemaStore.getItem('atlas_tmdb_key')) {
+    TMDB_API_KEY = payload.tmdbKey;
+  }
+
+  // First run against the database: hand up whatever localStorage still holds
+  // so it is adopted rather than left behind.
+  if (payload.adopt) {
+    const values = {};
+    CINEMA_KEYS.forEach(function (key) {
+      const value = cinemaStore.getItem(key);
+      if (value !== null) { values[key] = value; }
+    });
+    if (Object.keys(values).length) {
+      toBridge({ action: 'adoptState', values: values });
+    }
+    return;
+  }
+
+  // Otherwise the database is the authority. Mirror it into the cache and
+  // re-read anything already held in memory.
+  let changed = false;
+  Object.keys(payload.values || {}).forEach(function (key) {
+    if (localStorage.getItem(key) !== payload.values[key]) {
+      try { localStorage.setItem(key, payload.values[key]); changed = true; } catch (e) {}
+    }
+  });
+  if (changed) {
+    library = readLibrary();
+    if (typeof currentTab !== 'undefined' && currentTab === 'library') { renderLibrary(); }
+  }
+};
+
+/* The TMDB key arrives from Swift with the rest of the state, read from the
+   login Keychain, so it is not in this file and not in the repo. Settings holds
+   the field that writes it. `atlas_tmdb_key` still wins if it is set, which is
+   what a dev run without a Keychain entry uses. */
+let TMDB_API_KEY = cinemaStore.getItem('atlas_tmdb_key') || window.__ATLAS_TMDB_KEY__ || "";
+const BASE_URL = "https://api.themoviedb.org/3";
+const IMG = "https://image.tmdb.org/t/p/w342";
+const BACKDROP = "https://image.tmdb.org/t/p/original";
+
+const SOURCES = [
+  /* Your own server first — it is the only source that cannot rot. */
+  { id: 'jellyfin',  label: 'My Server', native: true, jellyfin: true },
+  /* Internet Archive serves real MP4 files over CORS with byte-range support,
+     so this one plays in ATLAS's own <video> rather than a rented iframe.
+     That is the whole point of it: the page can read currentTime, which is
+     what makes resume and Continue Watching possible at all. Public-domain
+     titles only — it will not find anything still in copyright. */
+  { id: 'archive',   label: 'Archive', native: true }
+];
+
+/* Each tab is a hero source plus the rails under it. */
+const TABS = {
+  home: {
+    hero: '/trending/all/day',
+    rails: [
+      { title: 'Top 10 This Week', path: '/trending/all/week', ranked: true },
+      { title: 'Popular Films',    path: '/movie/popular',   kind: 'movie' },
+      { title: 'Popular Series',   path: '/tv/popular',      kind: 'tv' },
+      { title: 'Top Rated',        path: '/movie/top_rated', kind: 'movie' }
+    ]
+  },
+  movie: {
+    hero: '/movie/now_playing',
+    rails: [
+      { title: 'In Theaters',   path: '/movie/now_playing', kind: 'movie' },
+      { title: 'Popular Films', path: '/movie/popular',     kind: 'movie' },
+      { title: 'Top Rated',     path: '/movie/top_rated',   kind: 'movie' },
+      { title: 'Coming Soon',   path: '/movie/upcoming',    kind: 'movie' }
+    ]
+  },
+  tv: {
+    hero: '/tv/popular',
+    rails: [
+      { title: 'Airing Today',   path: '/tv/airing_today', kind: 'tv' },
+      { title: 'Popular Series', path: '/tv/popular',      kind: 'tv' },
+      { title: 'Top Rated',      path: '/tv/top_rated',    kind: 'tv' },
+      { title: 'On The Air',     path: '/tv/on_the_air',   kind: 'tv' }
+    ]
+  }
+};
+
+const ICON_STAR = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.6 2.9 5.9 6.5.95-4.7 4.58 1.1 6.47L12 17.44 6.2 20.5l1.1-6.47L2.6 9.45l6.5-.95z"/></svg>';
+const ICON_PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>';
+
+let currentTab = 'home';
+let currentItem = null;
+let currentSource = cinemaStore.getItem('atlas_cinema_source') || SOURCES[0].id;
+let currentSeason = 1;
+let currentEpisode = 1;
+let currentDetails = null;
+let libraryView = 'favorites';
+let playlistItem = null;
+
+/* Featured rotation state */
+let featured = [];
+let featuredIndex = 0;
+let rotateTimer = null;
+let bgFlip = false;
+let heroLabel = 'FEATURED';
+
+const $ = id => document.getElementById(id);
+
+/* ---------- pure helpers ---------- */
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch =>
+    ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
+
+function titleOf(item) { return item.title || item.name || 'Untitled'; }
+function yearOf(item) { return (item.release_date || item.first_air_date || '').substring(0, 4); }
+function ratingOf(item) { return item.vote_average ? item.vote_average.toFixed(1) : null; }
+function ambientHue(item) { return (Number(item && item.id) * 37) % 360; }
+
+/* TMDB only stamps media_type on /trending; the per-kind endpoints omit it, so
+   fall back to the field only a series carries. */
+function isSeries(item) {
+  return item.media_type === 'tv' || item.first_air_date !== undefined;
+}
+
+const LIBRARY_KEY = 'atlas_cinema_library_v1';
+
+function itemKey(item) {
+  return `${isSeries(item) ? 'tv' : 'movie'}:${item.id}`;
+}
+
+function uniqueItems(items) {
+  const seen = new Set();
+  return (Array.isArray(items) ? items : []).filter(item => {
+    if (!item || item.id === undefined) return false;
+    const key = itemKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function emptyLibrary() {
+  return { version: 1, favorites: [], watchLater: [], playlists: [] };
+}
+
+function normalizeLibrary(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    version: 1,
+    favorites: uniqueItems(source.favorites),
+    watchLater: uniqueItems(source.watchLater),
+    playlists: (Array.isArray(source.playlists) ? source.playlists : [])
+      .filter(list => list && typeof list.id === 'string' && typeof list.name === 'string')
+      .map(list => ({ id: list.id, name: list.name.trim(), items: uniqueItems(list.items) }))
+      .filter(list => list.name)
+  };
+}
+
+function readLibrary() {
+  try {
+    const stored = cinemaStore.getItem(LIBRARY_KEY);
+    if (stored) return normalizeLibrary(JSON.parse(stored));
+  } catch {}
+
+  // The first Cinema build called Watch Later "Watchlist". Adopt those saves
+  // exactly once so upgrading the page never makes a user's list disappear.
+  let legacy = [];
+  try { legacy = JSON.parse(localStorage.getItem('atlas_watchlist') || '[]'); } catch {}
+  const migrated = emptyLibrary();
+  migrated.watchLater = uniqueItems(legacy);
+  cinemaStore.setItem(LIBRARY_KEY, JSON.stringify(migrated));
+  localStorage.removeItem('atlas_watchlist');
+  return migrated;
+}
+
+let library = readLibrary();
+
+function saveLibrary() {
+  library = normalizeLibrary(library);
+  cinemaStore.setItem(LIBRARY_KEY, JSON.stringify(library));
+}
+
+function inCollection(collection, item) {
+  return !!item && library[collection].some(saved => itemKey(saved) === itemKey(item));
+}
+
+function toggleCollection(collection, item) {
+  if (!item || !['favorites', 'watchLater'].includes(collection)) return false;
+  const key = itemKey(item);
+  const index = library[collection].findIndex(saved => itemKey(saved) === key);
+  if (index > -1) library[collection].splice(index, 1);
+  else library[collection].push(item);
+  saveLibrary();
+  return index === -1;
+}
+
+function createPlaylist(name) {
+  const clean = String(name || '').trim();
+  if (!clean) return null;
+  const existing = library.playlists.find(list => list.name.toLowerCase() === clean.toLowerCase());
+  if (existing) return existing;
+  const list = { id: `list-${Date.now()}-${library.playlists.length}`, name: clean, items: [] };
+  library.playlists.push(list);
+  saveLibrary();
+  return library.playlists.find(candidate => candidate.id === list.id);
+}
+
+function inPlaylist(list, item) {
+  return !!list && !!item && list.items.some(saved => itemKey(saved) === itemKey(item));
+}
+
+function togglePlaylist(listId, item) {
+  const list = library.playlists.find(candidate => candidate.id === listId);
+  if (!list || !item) return false;
+  const key = itemKey(item);
+  const index = list.items.findIndex(saved => itemKey(saved) === key);
+  if (index > -1) list.items.splice(index, 1);
+  else list.items.push(item);
+  saveLibrary();
+  return index === -1;
+}
+
+function reorderCollection(collection, movingKey, targetKey, placeAfter) {
+  if (!['favorites', 'watchLater'].includes(collection) || movingKey === targetKey) return false;
+  const items = library[collection];
+  const from = items.findIndex(item => itemKey(item) === movingKey);
+  const target = items.findIndex(item => itemKey(item) === targetKey);
+  if (from < 0 || target < 0) return false;
+  const [moving] = items.splice(from, 1);
+  const adjustedTarget = items.findIndex(item => itemKey(item) === targetKey);
+  items.splice(adjustedTarget + (placeAfter ? 1 : 0), 0, moving);
+  saveLibrary();
+  return true;
+}
+
+function personalHeroItems() {
+  return library.favorites
+    .filter(item => item.backdrop_path || item.poster_path)
+    .slice(0, 6);
+}
+
+function personalRails() {
+  return library.playlists
+    .filter(list => list.items.some(item => item.poster_path))
+    .slice()
+    .sort((a, b) => {
+      const aGold = a.name.toLowerCase() === 'gold medals' ? 0 : 1;
+      const bGold = b.name.toLowerCase() === 'gold medals' ? 0 : 1;
+      return aGold - bGold;
+    })
+    .map(list => ({ title: list.name, items: list.items }));
+}
+
+async function tmdb(path, params) {
+  const query = new URLSearchParams({ api_key: TMDB_API_KEY, ...(params || {}) });
+  const res = await fetch(`${BASE_URL}${path}?${query}`);
+  // A rejected key fails every request, so it is a page-level condition rather
+  // than a per-rail one — the previous build reported it as four identical
+  // "could not load" blocks that said nothing about the actual cause.
+  if (res.status === 401) { showKeyError(); throw new Error('TMDB rejected the API key'); }
+  if (!res.ok) throw new Error(`TMDB ${res.status}`);
+  return res.json();
+}
+
+let keyErrorShown = false;
+function showKeyError() {
+  if (keyErrorShown) return;
+  keyErrorShown = true;
+  clearInterval(rotateTimer);
+  $('hero').hidden = true;
+  $('rails').hidden = true;
+  $('results').hidden = false;
+  $('resultsTitle').textContent = 'TMDB key rejected';
+  $('resultsCount').textContent = '';
+  $('resultsGrid').innerHTML = `
+    <div class="empty">
+      <div class="empty__mark">\u2726</div>
+      <div class="empty__title">Metadata is unavailable</div>
+      <div class="empty__body">TMDB returned 401 for this key. Get a free one at
+        themoviedb.org/settings/api, then run
+        <code>cinemaStore.setItem('atlas_tmdb_key', 'YOUR_KEY')</code>
+        in the Cinema inspector and reload.</div>
+    </div>`;
+}
+
+let toastTimer = null;
+function toast(message, bad) {
+  const el = $('toast');
+  el.textContent = message;
+  el.classList.toggle('bad', !!bad);
+  el.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('on'), 2200);
+}
+
+/* ---------- cards ---------- */
+
+/* TMDB gives a path to join to its CDN; Jellyfin gives a whole URL. */
+function posterUrl(item) {
+  return item.poster_url || `${IMG}${item.poster_path}`;
+}
+
+function cardHtml(item, rank, options) {
+  const opts = options || {};
+  const rating = ratingOf(item);
+  const name = escapeHtml(titleOf(item));
+  const reorderClass = opts.reorder ? ' card--reorder' : '';
+  const dragAttrs = opts.reorder ? ` draggable="true" data-key="${escapeHtml(itemKey(item))}"` : '';
+  const heroSlot = opts.reorder && opts.index < 6
+    ? `<span class="card__hero-slot">FEATURED ${String(opts.index + 1).padStart(2, '0')}</span>`
+    : '';
+  return `
+    <div class="card${rank ? ' card--ranked' : ''}${reorderClass}" data-id="${escapeHtml(itemKey(item))}"${dragAttrs} tabindex="0" role="button" aria-label="${name}">
+      ${rank ? `<span class="card__rank">${rank}</span>` : ''}
+      <div class="card__art">
+        ${heroSlot}
+        <img src="${posterUrl(item)}" alt="" loading="lazy">
+        ${rating ? `<span class="card__rating">${ICON_STAR}${rating}</span>` : ''}
+        <div class="card__veil"><span class="card__play">${ICON_PLAY}</span></div>
+      </div>
+      <div class="card__label">
+        <div class="card__name" title="${name}">${name}</div>
+        <div class="card__sub">${escapeHtml(yearOf(item) || '—')} · ${isSeries(item) ? 'SERIES' : 'FILM'}</div>
+      </div>
+    </div>`;
+}
+
+function skeletons(count) {
+  return Array.from({ length: count }, () =>
+    '<div class="skel"><div class="skel__art"></div><div class="skel__line"></div><div class="skel__line"></div></div>'
+  ).join('');
+}
+
+/* One delegated handler for the whole page: rails and the results grid are
+   both rewritten wholesale, and per-card listeners would leak on every rewrite. */
+const cardIndex = new Map();
+let draggedCardKey = null;
+let suppressCardOpen = false;
+
+function remember(items) {
+  items.forEach(item => cardIndex.set(itemKey(item), item));
+}
+
+document.addEventListener('click', event => {
+  const card = event.target.closest('.card');
+  if (card && !suppressCardOpen) openSheet(cardIndex.get(card.dataset.id));
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const card = event.target.closest('.card');
+  if (!card) return;
+  event.preventDefault();
+  openSheet(cardIndex.get(card.dataset.id));
+});
+
+/* ---------- hero ---------- */
+
+function paintHero() {
+  const item = featured[featuredIndex];
+  if (!item) return;
+
+  // Alternate the two background layers so the swap crossfades.
+  const next = bgFlip ? $('bgA') : $('bgB');
+  const prev = bgFlip ? $('bgB') : $('bgA');
+  bgFlip = !bgFlip;
+  next.style.backgroundImage = `url('${BACKDROP}${item.backdrop_path || item.poster_path}')`;
+  next.classList.add('on');
+  prev.classList.remove('on');
+  $('hero').style.setProperty('--hero-h', ambientHue(item));
+
+  const total = String(featured.length).padStart(2, '0');
+  const index = String(featuredIndex + 1).padStart(2, '0');
+  $('heroKicker').textContent = `${heroLabel} ${index} / ${total}`;
+  $('heroTitle').textContent = titleOf(item);
+  $('heroRating').innerHTML = ratingOf(item) ? `${ICON_STAR}${ratingOf(item)}` : '';
+  $('heroYear').textContent = yearOf(item) || '—';
+  $('heroKind').textContent = isSeries(item) ? 'Series' : 'Film';
+  $('heroDesc').textContent = item.overview || '';
+  $('heroSave').classList.toggle('on', inCollection('watchLater', item));
+  $('heroSave').title = inCollection('watchLater', item) ? 'Remove from Watch Later' : 'Add to Watch Later';
+  $('heroSave').setAttribute('aria-label', $('heroSave').title);
+
+  $('heroDots').innerHTML = featured.map((_, i) =>
+    `<button data-slide="${i}"${i === featuredIndex ? ' class="on"' : ''} aria-label="Slide ${i + 1}"></button>`
+  ).join('');
+}
+
+function showSlide(index) {
+  featuredIndex = (index + featured.length) % featured.length;
+  paintHero();
+  restartRotation();
+}
+
+function restartRotation() {
+  clearInterval(rotateTimer);
+  if (featured.length > 1) {
+    rotateTimer = setInterval(() => showSlide(featuredIndex + 1), 9000);
+  }
+}
+
+$('heroDots').addEventListener('click', event => {
+  const btn = event.target.closest('button');
+  if (btn) showSlide(Number(btn.dataset.slide));
+});
+
+$('heroPlay').addEventListener('click', () => openSheet(featured[featuredIndex]));
+$('heroInfo').addEventListener('click', () => openSheet(featured[featuredIndex]));
+$('heroSave').addEventListener('click', () => {
+  const item = featured[featuredIndex];
+  const added = toggleCollection('watchLater', item);
+  toast(`${added ? 'Saved' : 'Removed'} “${titleOf(item)}” ${added ? 'to' : 'from'} Watch Later`);
+  paintHero();
+});
+
+/* ---------- rails ---------- */
+
+function railHtml(rail, position) {
+  const index = String(position + 1).padStart(2, '0');
+  return `
+    <section class="rail" data-rail="${position}">
+      <div class="rail__head">
+        <span class="rail__index">[${index}]</span>
+        <h2 class="rail__title">
+          <button class="rail__all" data-browse="${position}"
+                  title="Browse everything in ${escapeHtml(rail.title)}">${escapeHtml(rail.title)}<span class="rail__chev">\u203a</span></button>
+        </h2>
+        <span class="rail__rule"></span>
+        <div class="rail__nav">
+          <button data-scroll="-1" aria-label="Scroll left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+          <button data-scroll="1" aria-label="Scroll right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
+        </div>
+      </div>
+      <div class="rail__track">${skeletons(8)}</div>
+    </section>`;
+}
+
+$('rails').addEventListener('click', event => {
+  const browse = event.target.closest('[data-browse]');
+  if (browse) { openCategory(Number(browse.dataset.browse)); return; }
+
+  const btn = event.target.closest('[data-scroll]');
+  if (!btn) return;
+  const track = btn.closest('.rail').querySelector('.rail__track');
+  track.scrollBy({ left: Number(btn.dataset.scroll) * track.clientWidth * 0.82, behavior: 'smooth' });
+});
+
+async function loadRail(rail, position) {
+  const track = document.querySelector(`[data-rail="${position}"] .rail__track`);
+  if (!track) return;
+  if (rail.jellyfin) {
+    try {
+      const items = await jellyfinLibrary(30);
+      remember(items);
+      track.innerHTML = items.length
+        ? items.map(item => cardHtml(item)).join('')
+        : `<div class="empty"><div class="empty__title">Your library is empty</div>` +
+          `<div class="empty__body">Add media to Jellyfin and it appears here.</div></div>`;
+    } catch (err) {
+      track.innerHTML = `<div class="empty"><div class="empty__title">Could not reach your server</div>` +
+                        `<div class="empty__body">${escapeHtml(String(err.message || err))}</div></div>`;
+    }
+    return;
+  }
+  if (rail.items) {
+    const items = uniqueItems(rail.items).filter(item => item.poster_path);
+    remember(items);
+    track.innerHTML = items.length
+      ? items.map(item => cardHtml(item)).join('')
+      : `<div class="empty"><div class="empty__title">${escapeHtml(rail.title)} is empty</div></div>`;
+    return;
+  }
+  try {
+    const data = await tmdb(rail.path);
+    const items = (data.results || [])
+      .filter(item => item.poster_path)
+      .map(item => ({ ...item, media_type: item.media_type || rail.kind }))
+      .slice(0, rail.ranked ? 10 : 20);
+    remember(items);
+    track.innerHTML = items.map((item, i) => cardHtml(item, rail.ranked ? i + 1 : 0)).join('');
+  } catch (err) {
+    track.innerHTML = `<div class="empty"><div class="empty__title">Could not load ${escapeHtml(rail.title)}</div>` +
+                      `<div class="empty__body">${escapeHtml(String(err.message || err))}</div></div>`;
+  }
+}
+
+async function loadHero(path, kind) {
+  try {
+    const data = await tmdb(path);
+    featured = (data.results || [])
+      .filter(item => item.backdrop_path && item.overview)
+      .map(item => ({ ...item, media_type: item.media_type || kind }))
+      .slice(0, 6);
+    remember(featured);
+    if (!featured.length) { $('hero').hidden = true; return; }
+    heroLabel = 'FEATURED';
+    $('hero').hidden = false;
+    featuredIndex = 0;
+    paintHero();
+    restartRotation();
+  } catch {
+    $('hero').hidden = true;
+  }
+}
+
+function loadHomeHero(path) {
+  const favorites = personalHeroItems();
+  if (!favorites.length) {
+    loadHero(path);
+    return;
+  }
+  featured = favorites;
+  heroLabel = 'FAVORITES';
+  remember(featured);
+  $('hero').hidden = false;
+  featuredIndex = 0;
+  paintHero();
+  restartRotation();
+}
+
+/* ---------- library ---------- */
+
+function librarySelection() {
+  if (libraryView === 'favorites') return { title: 'Favorites', items: library.favorites };
+  if (libraryView === 'watchLater') return { title: 'Watch Later', items: library.watchLater };
+  const list = library.playlists.find(candidate => candidate.id === libraryView);
+  if (list) return { title: list.name, items: list.items };
+  libraryView = 'favorites';
+  return { title: 'Favorites', items: library.favorites };
+}
+
+function renderLibraryTabs() {
+  const tabs = [
+    { id: 'favorites', name: 'Favorites', count: library.favorites.length },
+    { id: 'watchLater', name: 'Watch Later', count: library.watchLater.length },
+    ...library.playlists.map(list => ({ id: list.id, name: list.name, count: list.items.length }))
+  ];
+  $('libraryTabs').innerHTML = tabs.map(tab =>
+    `<button class="chip${tab.id === libraryView ? ' on' : ''}" data-library-view="${escapeHtml(tab.id)}">` +
+    `${escapeHtml(tab.name)} <span class="playlist-option__count">${tab.count}</span></button>`
+  ).join('');
+}
+
+function renderLibrary() {
+  clearInterval(rotateTimer);
+  $('hero').hidden = true;
+  $('rails').hidden = true;
+  $('results').hidden = false;
+  $('libraryTools').hidden = false;
+  $('resultsTitle').textContent = 'My Library';
+
+  const selection = librarySelection();
+  const items = selection.items.filter(item => item.poster_path);
+  remember(items);
+  renderLibraryTabs();
+  $('resultsCount').textContent = `${selection.title} · ${items.length}`;
+
+  const reorder = libraryView === 'favorites';
+  $('libraryHint').hidden = !reorder || items.length < 2;
+  $('resultsGrid').innerHTML = items.length
+    ? items.map((item, index) => cardHtml(item, 0, { reorder, index })).join('')
+    : `<div class="empty">
+         <div class="empty__mark">✦</div>
+         <div class="empty__title">${escapeHtml(selection.title)} is empty</div>
+         <div class="empty__body">Open a title to save it here. Your library lives privately on this Mac.</div>
+       </div>`;
+}
+
+$('libraryTabs').addEventListener('click', event => {
+  const button = event.target.closest('[data-library-view]');
+  if (!button) return;
+  libraryView = button.dataset.libraryView;
+  renderLibrary();
+});
+
+$('newPlaylist').addEventListener('click', () => openPlaylistDialog(null));
+
+$('resultsGrid').addEventListener('dragstart', event => {
+  const card = event.target.closest('.card--reorder');
+  if (!card) return;
+  draggedCardKey = card.dataset.key;
+  suppressCardOpen = true;
+  card.classList.add('dragging');
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', draggedCardKey);
+});
+
+$('resultsGrid').addEventListener('dragover', event => {
+  const card = event.target.closest('.card--reorder');
+  document.querySelectorAll('.card--reorder').forEach(item => item.classList.remove('drop-before', 'drop-after'));
+  if (!card || !draggedCardKey || card.dataset.key === draggedCardKey) return;
+  event.preventDefault();
+  const rect = card.getBoundingClientRect();
+  const after = event.clientY > rect.top + rect.height / 2 ||
+    (Math.abs(event.clientY - (rect.top + rect.height / 2)) < rect.height / 3 && event.clientX > rect.left + rect.width / 2);
+  card.classList.add(after ? 'drop-after' : 'drop-before');
+});
+
+$('resultsGrid').addEventListener('drop', event => {
+  const card = event.target.closest('.card--reorder');
+  if (!card || !draggedCardKey) return;
+  event.preventDefault();
+  const after = card.classList.contains('drop-after');
+  if (reorderCollection('favorites', draggedCardKey, card.dataset.key, after)) {
+    renderLibrary();
+    toast('Favorites reordered · Home hero updated');
+  }
+});
+
+$('resultsGrid').addEventListener('dragend', () => {
+  draggedCardKey = null;
+  document.querySelectorAll('.card--reorder').forEach(card => card.classList.remove('dragging', 'drop-before', 'drop-after'));
+  setTimeout(() => { suppressCardOpen = false; }, 0);
+});
+
+/* ---------- tabs ---------- */
+
+function switchTab(tab) {
+  currentTab = tab;
+  category = null;
+  document.querySelectorAll('.dock [data-tab]').forEach(btn =>
+    btn.classList.toggle('on', btn.dataset.tab === tab));
+  $('search').value = '';
+  $('searchBox').classList.remove('open');
+  $('app').scrollTop = 0;
+
+  if (tab === 'library') { renderLibrary(); return; }
+
+  const config = TABS[tab];
+  const serverRail = tab === 'home' && jellyfinConnected()
+    ? [{ title: `On ${jellyfin.name}\u2019s server`, jellyfin: true }]
+    : [];
+  const tabRails = tab === 'home'
+    ? [...serverRail, ...personalRails(), ...config.rails]
+    : config.rails;
+  $('libraryTools').hidden = true;
+  $('results').hidden = true;
+  $('rails').hidden = false;
+  $('rails').innerHTML = tabRails.map(railHtml).join('');
+  if (tab === 'home') loadHomeHero(config.hero);
+  else loadHero(config.hero, tab);
+  tabRails.forEach(loadRail);
+}
+
+document.querySelector('.dock').addEventListener('click', event => {
+  const btn = event.target.closest('[data-tab]');
+  if (!btn) return;
+  if (btn.dataset.tab === 'server') { openJellyfinDialog(); return; }
+  switchTab(btn.dataset.tab);
+});
+
+/* ---------- search ---------- */
+
+$('searchIcon').addEventListener('click', () => {
+  const box = $('searchBox');
+  box.classList.toggle('open');
+  if (box.classList.contains('open')) $('search').focus();
+  else if ($('search').value) { $('search').value = ''; switchTab(currentTab); }
+});
+
+let searchTimer = null;
+$('search').addEventListener('input', event => {
+  const value = event.target.value;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => runSearch(value), 280);
+});
+
+$('search').addEventListener('keydown', event => {
+  if (event.key === 'Escape') { event.target.value = ''; $('searchBox').classList.remove('open'); switchTab(currentTab); }
+});
+
+async function runSearch(query) {
+  if (!query.trim()) { switchTab(currentTab); return; }
+
+  clearInterval(rotateTimer);
+  $('hero').hidden = true;
+  $('rails').hidden = true;
+  $('results').hidden = false;
+  $('libraryTools').hidden = true;
+  $('app').scrollTop = 0;
+  $('resultsTitle').textContent = `“${query}”`;
+  $('resultsCount').textContent = '';
+  $('resultsGrid').innerHTML = skeletons(12);
+
+  try {
+    const data = await tmdb('/search/multi', { query });
+    const items = (data.results || []).filter(r => r.media_type !== 'person' && r.poster_path);
+    remember(items);
+    $('resultsCount').textContent = `${items.length} result${items.length === 1 ? '' : 's'}`;
+    $('resultsGrid').innerHTML = items.length
+      ? items.map(item => cardHtml(item)).join('')
+      : `<div class="empty">
+           <div class="empty__mark">✦</div>
+           <div class="empty__title">No matches</div>
+           <div class="empty__body">Nothing came back for that. Try a shorter title.</div>
+         </div>`;
+  } catch (err) {
+    $('resultsGrid').innerHTML = `<div class="empty"><div class="empty__title">Search failed</div>` +
+                                 `<div class="empty__body">${escapeHtml(String(err.message || err))}</div></div>`;
+  }
+}
+
+/* ---------- player ---------- */
+
+/* Which source worked, per title.
+   { "movie:1175942": { good: "jellyfin", bad: ["archive"] } }
+
+   A source that carries one film often does not carry the next, so a single
+   global preference is the wrong unit — it sends you back through the same
+   source that did not have it every time you reopen the same title. Where a
+   source renders in a cross-origin iframe the page cannot see inside it to
+   learn this on its own, so the signal comes from the "Not working" button
+   and is never asked for twice. */
+let sourceMemory = readSourceMemory();
+
+function readSourceMemory() {
+  try { return JSON.parse(cinemaStore.getItem('atlas_cinema_sources') || '{}'); }
+  catch { return {}; }
+}
+
+function memoryKey(item) {
+  return `${isSeries(item) ? 'tv' : 'movie'}:${item.id}`;
+}
+
+function memoryFor(item) {
+  return sourceMemory[memoryKey(item)] || { good: null, bad: [] };
+}
+
+function saveMemory(item, patch) {
+  const key = memoryKey(item);
+  sourceMemory[key] = { ...memoryFor(item), ...patch };
+  cinemaStore.setItem('atlas_cinema_sources', JSON.stringify(sourceMemory));
+}
+
+/* Best guess for a title: whatever last worked for it, else the last source
+   used anywhere, else the first one not already known to be broken here. */
+function pickSource(item) {
+  const memory = memoryFor(item);
+  if (memory.good) return memory.good;
+  if (!memory.bad.includes(currentSource)) return currentSource;
+  const alive = SOURCES.find(src => !memory.bad.includes(src.id));
+  return (alive || SOURCES[0]).id;
+}
+
+/* ---------- source names ---------- *
+
+   Display only. The rename is keyed by source id and never touches the id or
+   the URL builders, so a source answering to "Living room" still resolves to
+   the same server. Useful when you add your own sources and the shipped
+   labels stop describing what you actually have. */
+
+const SOURCE_NAMES_KEY = 'atlas_cinema_source_names';
+
+function sourceNames() {
+  try { return JSON.parse(cinemaStore.getItem(SOURCE_NAMES_KEY) || '{}'); }
+  catch (e) { return {}; }
+}
+
+function nameForSource(src) {
+  const custom = sourceNames()[src.id];
+  return custom && custom.trim() ? custom : src.label;
+}
+
+/** Empty or unchanged clears the override rather than storing a copy. */
+function renameSource(id, name) {
+  const names = sourceNames();
+  const source = SOURCES.find(s => s.id === id);
+  const trimmed = (name || '').trim();
+
+  if (!trimmed || (source && trimmed === source.label)) { delete names[id]; }
+  else { names[id] = trimmed.slice(0, 24); }
+
+  cinemaStore.setItem(SOURCE_NAMES_KEY, JSON.stringify(names));
+  renderSources();
+}
+
+function renderSources() {
+  const memory = currentItem ? memoryFor(currentItem) : { good: null, bad: [] };
+  $('sources').innerHTML = SOURCES.map(src => {
+    const classes = ['chip'];
+    if (src.id === currentSource) classes.push('on');
+    if (memory.bad.includes(src.id)) classes.push('chip--dead');
+    const mark = src.id === memory.good ? '<span class="chip__mark">\u2726</span>' : '';
+    const renamed = sourceNames()[src.id] ? ' title="' + escapeHtml(src.label) + '"' : '';
+    return `<button class="${classes.join(' ')}" data-source="${src.id}"${renamed}>${mark}${escapeHtml(nameForSource(src))}</button>`;
+  }).join('');
+}
+
+/* Double-click swaps the pill for an input in place. Single click still picks
+   the source, so nothing that worked before needs relearning. */
+$('sources').addEventListener('dblclick', event => {
+  const button = event.target.closest('[data-source]');
+  if (!button || button.querySelector('input')) return;
+  event.preventDefault();
+
+  const id = button.dataset.source;
+  const source = SOURCES.find(s => s.id === id);
+  const input = document.createElement('input');
+  input.className = 'chip__rename';
+  input.value = nameForSource(source);
+  input.setAttribute('aria-label', 'Rename ' + source.label);
+  input.maxLength = 24;
+
+  button.textContent = '';
+  button.appendChild(input);
+  input.focus();
+  input.select();
+
+  let settled = false;
+  const finish = commit => {
+    if (settled) return;
+    settled = true;
+    if (commit) renameSource(id, input.value);
+    else renderSources();
+  };
+
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  // The pill under the input is still a source button; typing in it must not
+  // switch the player.
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('dblclick', e => e.stopPropagation());
+});
+
+function useSource(id, remember) {
+  currentSource = id;
+  cinemaStore.setItem('atlas_cinema_source', id);
+  if (remember && currentItem) {
+    const memory = memoryFor(currentItem);
+    saveMemory(currentItem, { good: id, bad: memory.bad.filter(b => b !== id) });
+  }
+  renderSources();
+  loadPlayer();
+}
+
+$('sources').addEventListener('click', event => {
+  const btn = event.target.closest('[data-source]');
+  // A pill being renamed is a text field, not a source button.
+  if (btn && !btn.querySelector('input')) useSource(btn.dataset.source, false);
+});
+
+/* Switching by hand is the strongest signal available that the previous pick
+   failed, so it both blacklists the old source and promotes the new one. */
+$('srcBad').addEventListener('click', () => {
+  if (!currentItem) return;
+  const dead = currentSource;
+  const memory = memoryFor(currentItem);
+  const bad = memory.bad.includes(dead) ? memory.bad : [...memory.bad, dead];
+  saveMemory(currentItem, { bad, good: memory.good === dead ? null : memory.good });
+
+  const next = SOURCES.find(src => !bad.includes(src.id));
+  if (!next) {
+    renderSources();
+    toast('Every source is marked broken for this title', true);
+    return;
+  }
+  useSource(next.id, true);
+  toast(`Trying ${next.label}`);
+});
+
+$('srcReload').addEventListener('click', () => { $('frame').src = 'about:blank'; loadPlayer(); });
+
+/* 1-5 jump straight to a source while the player is open. */
+document.addEventListener('keydown', event => {
+  if (!$('veil').classList.contains('on')) return;
+  if (event.target.matches('input, select, textarea')) return;
+  const slot = Number(event.key);
+  if (slot >= 1 && slot <= SOURCES.length) useSource(SOURCES[slot - 1].id, true);
+});
+
+/* ---------- player state ----------
+
+   An embed runs cross-origin, so the page cannot see whether a video is
+   actually playing. Three things ARE observable, and everything below is
+   built out of only those:
+
+     - whether the iframe fired `load` at all, and how long it took
+     - whether the host answers a no-cors probe (reachable vs blocked/down)
+     - what you tell it by pressing "Not working"
+
+   A host that is up but has no copy of this title looks identical to a
+   working one from out here. That case can only come from you. */
+
+const SLOW_AFTER = 7000;    // still blank this long: say so, keep waiting
+const DEAD_AFTER = 18000;   // never fired load: treat as failed
+
+const playerLog = [];
+let loadStartedAt = 0;
+let slowTimer = null, deadTimer = null;
+let retriedOnce = false;
+let probeAbort = null;
+
+function log(message) {
+  const stamp = new Date().toISOString().substring(11, 23);
+  const line = `${stamp}  ${message}`;
+  playerLog.push(line);
+  if (playerLog.length > 60) playerLog.shift();
+  console.log('[Cinema]', message);
+  if (!$('plog').hidden) $('plog').textContent = playerLog.slice(-24).join('\n');
+}
+
+function clearTimers() {
+  clearTimeout(slowTimer);
+  clearTimeout(deadTimer);
+  if (probeAbort) { probeAbort.abort(); probeAbort = null; }
+}
+
+/* Overlay states. `actions` is a list of [label, handler]. */
+function setState(kind, opts) {
+  const state = $('pstate');
+  state.hidden = false;
+  state.classList.remove('fading');
+  $('pspin').hidden = kind !== 'loading';
+  $('pmark').hidden = !opts.mark;
+  $('pmark').textContent = opts.mark || '';
+  $('ptitle').textContent = opts.title || '';
+  $('pbody').textContent = opts.body || '';
+  $('plog').hidden = true;
+
+  $('pactions').innerHTML = (opts.actions || [])
+    .map(([label], i) => `<button class="chip" data-act="${i}">${escapeHtml(label)}</button>`)
+    .join('');
+  $('pactions').onclick = event => {
+    const btn = event.target.closest('[data-act]');
+    if (btn) opts.actions[Number(btn.dataset.act)][1]();
+  };
+}
+
+function clearState() {
+  const state = $('pstate');
+  state.classList.add('fading');
+  setTimeout(() => { state.hidden = true; state.classList.remove('fading'); }, 300);
+}
+
+/* Reachability probe. A no-cors response is opaque — its status is unreadable —
+   but the request still REJECTS when the host cannot be reached at all. That
+   separates "blocked or down" from "up but has nothing for this title", which
+   is the difference between a useful message and a black rectangle. */
+async function probe(url, label) {
+  probeAbort = new AbortController();
+  const started = Date.now();
+  try {
+    await fetch(url, { mode: 'no-cors', signal: probeAbort.signal });
+    log(`probe ok: ${label} answered in ${Date.now() - started}ms`);
+    return true;
+  } catch (err) {
+    if (err.name === 'AbortError') return true;   // superseded, not a failure
+    log(`probe FAILED: ${label} unreachable (${err.message})`);
+    return false;
+  }
+}
+
+function failState(reason, src) {
+  const remaining = SOURCES.filter(s => s.id !== src.id);
+  setState('dead', {
+    mark: '\u26A0',
+    title: `${src.label} did not load`,
+    body: reason,
+    actions: [
+      ['Retry', () => loadPlayer()],
+      ...(remaining.length ? [['Try ' + remaining[0].label, () => $('srcBad').click()]] : []),
+      ['Show log', () => {
+        $('plog').hidden = !$('plog').hidden;
+        $('plog').textContent = playerLog.slice(-24).join('\n');
+      }]
+    ]
+  });
+}
+
+$('frame').addEventListener('load', () => {
+  // about:blank between loads fires this too; ignore it.
+  if (!loadStartedAt) return;
+  const elapsed = Date.now() - loadStartedAt;
+  loadStartedAt = 0;
+  clearTimers();
+  log(`loaded in ${elapsed}ms`);
+  clearState();
+});
+
+/* ---------- Jellyfin: your own server ----------
+
+   The one source here that is neither a rented iframe nor a stranger's upload.
+   Jellyfin serves files the user already owns, over a documented API, with a real
+   position endpoint — so resume is authoritative on the server rather than
+   guessed from a <video> in one browser. */
+
+const JELLYFIN_KEY = 'atlas_jellyfin_v1';
+const JF_DEVICE_ID = 'atlas-cinema-' + (cinemaStore.getItem('atlas_device') ||
+  (() => { const id = Math.random().toString(36).slice(2, 12);
+           cinemaStore.setItem('atlas_device', id); return id; })());
+
+let jellyfin = readJellyfin();
+
+function readJellyfin() {
+  try { return JSON.parse(cinemaStore.getItem(JELLYFIN_KEY) || 'null'); }
+  catch { return null; }
+}
+
+function jellyfinConnected() { return !!(jellyfin && jellyfin.token); }
+
+/* Only the token is kept. The password is used once to obtain it and is never
+   written to storage. */
+function saveJellyfin(config) {
+  jellyfin = config;
+  if (config) cinemaStore.setItem(JELLYFIN_KEY, JSON.stringify(config));
+  else cinemaStore.removeItem(JELLYFIN_KEY);
+}
+
+function jfAuthHeader(token) {
+  const parts = [
+    'Client="ATLAS Cinema"',
+    'Device="ATLAS"',
+    `DeviceId="${JF_DEVICE_ID}"`,
+    'Version="1.0.0"'
+  ];
+  if (token) parts.push(`Token="${token}"`);
+  return 'MediaBrowser ' + parts.join(', ');
+}
+
+async function jfFetch(path, options) {
+  const opts = options || {};
+  const res = await fetch(jellyfin.url.replace(/\/$/, '') + path, {
+    method: opts.method || 'GET',
+    headers: Object.assign({
+      'Authorization': jfAuthHeader(jellyfin.token),
+      'Content-Type': 'application/json'
+    }, opts.headers || {}),
+    body: opts.body ? JSON.stringify(opts.body) : undefined
+  });
+  if (res.status === 401) { saveJellyfin(null); throw new Error('Session expired — reconnect'); }
+  if (!res.ok) throw new Error(`Jellyfin ${res.status}`);
+  return res.status === 204 ? null : res.json();
+}
+
+async function jellyfinConnect(url, username, password) {
+  const base = url.replace(/\/$/, '');
+  const res = await fetch(base + '/Users/AuthenticateByName', {
+    method: 'POST',
+    headers: { 'Authorization': jfAuthHeader(null), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ Username: username, Pw: password })
+  });
+  if (res.status === 401) throw new Error('Wrong username or password');
+  if (!res.ok) throw new Error(`Server returned ${res.status}`);
+  const data = await res.json();
+  saveJellyfin({ url: base, token: data.AccessToken, userId: data.User.Id, name: data.User.Name });
+  log(`jellyfin: connected as ${data.User.Name}`);
+  return data;
+}
+
+/* A Jellyfin item, reshaped to the same fields every card and rail already
+   expects, so nothing downstream needs to know where it came from. */
+function jfToItem(entry) {
+  const kind = entry.Type === 'Series' ? 'tv' : 'movie';
+  return {
+    id: entry.Id,
+    jellyfinId: entry.Id,
+    media_type: kind,
+    title: kind === 'movie' ? entry.Name : undefined,
+    name: kind === 'tv' ? entry.Name : undefined,
+    overview: entry.Overview || '',
+    vote_average: entry.CommunityRating || 0,
+    release_date: kind === 'movie' && entry.ProductionYear ? `${entry.ProductionYear}-01-01` : undefined,
+    first_air_date: kind === 'tv' && entry.ProductionYear ? `${entry.ProductionYear}-01-01` : undefined,
+    poster_url: `${jellyfin.url}/Items/${entry.Id}/Images/Primary?maxHeight=480&quality=90`,
+    backdrop_url: `${jellyfin.url}/Items/${entry.Id}/Images/Backdrop?maxWidth=1920`,
+    resumeTicks: (entry.UserData && entry.UserData.PlaybackPositionTicks) || 0
+  };
+}
+
+async function jellyfinLibrary(limit) {
+  const params = new URLSearchParams({
+    userId: jellyfin.userId,
+    Recursive: 'true',
+    IncludeItemTypes: 'Movie,Series',
+    Fields: 'Overview,ProductionYear,UserData',
+    SortBy: 'DateCreated',
+    SortOrder: 'Descending',
+    Limit: String(limit || 40)
+  });
+  const data = await jfFetch('/Items?' + params);
+  return (data.Items || []).map(jfToItem);
+}
+
+/* Matching a TMDB title to something on the server. Jellyfin stores the TMDB
+   id it scraped, so that is checked first — an exact identity match beats any
+   amount of title fuzziness. */
+async function findOnJellyfin(item) {
+  const params = new URLSearchParams({
+    userId: jellyfin.userId,
+    Recursive: 'true',
+    IncludeItemTypes: isSeries(item) ? 'Series' : 'Movie',
+    Fields: 'ProviderIds,ProductionYear,UserData',
+    SearchTerm: titleOf(item),
+    Limit: '12'
+  });
+  const data = await jfFetch('/Items?' + params);
+  const entries = data.Items || [];
+
+  const byId = entries.find(e => e.ProviderIds && String(e.ProviderIds.Tmdb) === String(item.id));
+  if (byId) { log(`jellyfin: matched by TMDB id (${byId.Name})`); return jfToItem(byId); }
+
+  const year = yearOf(item);
+  const byTitle = entries.find(e =>
+    titlesMatch(titleOf(item), e.Name) && (!year || String(e.ProductionYear) === year));
+  if (byTitle) { log(`jellyfin: matched by title (${byTitle.Name})`); return jfToItem(byTitle); }
+
+  log('jellyfin: not in your library');
+  return null;
+}
+
+function jellyfinStreamUrl(id) {
+  return `${jellyfin.url}/Videos/${id}/stream?static=true&api_key=${encodeURIComponent(jellyfin.token)}`;
+}
+
+/* Position is reported back so resume follows the account, not this Mac. */
+async function jellyfinReport(endpoint, jfId, seconds, paused) {
+  if (!jellyfinConnected() || !jfId) return;
+  try {
+    await jfFetch(`/Sessions/Playing${endpoint}`, {
+      method: 'POST',
+      body: {
+        ItemId: jfId,
+        PositionTicks: Math.floor((seconds || 0) * 10000000),
+        IsPaused: !!paused,
+        PlayMethod: 'DirectStream'
+      }
+    });
+  } catch (err) { log(`jellyfin: report failed — ${err.message}`); }
+}
+
+async function loadJellyfin(item) {
+  const video = $('nvideo');
+  $('frame').hidden = true;
+  $('frame').src = 'about:blank';
+  video.hidden = false;
+  videoControls.attach();
+
+  if (!jellyfinConnected()) {
+    setState('dead', {
+      mark: '\u2726',
+      title: 'No server connected',
+      body: 'Connect a Jellyfin server and anything in your own library plays here, with resume.',
+      actions: [['Connect a server', () => { closeSheet(); openJellyfinDialog(); }]]
+    });
+    return;
+  }
+
+  setState('loading', { title: `Checking ${jellyfin.name}\u2019s library\u2026`, body: titleOf(item) });
+
+  let found;
+  try {
+    found = item.jellyfinId ? item : await findOnJellyfin(item);
+  } catch (err) {
+    failState(`Your server said: ${err.message}`, { id: 'jellyfin', label: 'My Server' });
+    return;
+  }
+
+  if (!found) {
+    setState('dead', {
+      mark: '\u2726',
+      title: 'Not in your library',
+      body: `${titleOf(item)} is not on your server yet. Add it there and it will play here.`,
+      actions: [['Back to ' + SOURCES[0].label, () => useSource(SOURCES[0].id, false)]]
+    });
+    return;
+  }
+
+  currentJellyfinId = found.jellyfinId;
+  video.src = jellyfinStreamUrl(found.jellyfinId);
+
+  video.onloadedmetadata = () => {
+    // The server's own position wins over anything stored locally.
+    const serverSeconds = (found.resumeTicks || 0) / 10000000;
+    const local = progressFor(item);
+    const resumeAt = serverSeconds > 30 ? serverSeconds : (local ? local.at : 0);
+    if (resumeAt && resumeAt < video.duration - 60) {
+      video.currentTime = resumeAt;
+      toast(`Resuming from ${formatClock(resumeAt)}`);
+    }
+    clearTimers();
+    clearState();
+    jellyfinReport('', found.jellyfinId, video.currentTime, false);
+    log(`jellyfin: playing ${found.jellyfinId}`);
+  };
+
+  video.onerror = () => {
+    failState('The file would not play. Your server may need to transcode it.',
+              { id: 'jellyfin', label: 'My Server' });
+  };
+}
+
+let currentJellyfinId = null;
+
+/* ---------- connect dialog ---------- */
+
+function openJellyfinDialog() {
+  const status = $('jfStatus');
+  status.textContent = '';
+  status.className = 'jf-status';
+  if (jellyfinConnected()) {
+    $('jfUrl').value = jellyfin.url;
+    $('jfUser').value = jellyfin.name || '';
+    status.textContent = `Connected as ${jellyfin.name}.`;
+    status.classList.add('ok');
+    $('jfForget').hidden = false;
+  } else {
+    $('jfForget').hidden = true;
+  }
+  $('jfVeil').classList.add('on');
+  setTimeout(() => $(jellyfinConnected() ? 'jfUrl' : 'jfUser').focus(), 0);
+}
+
+$('jfClose').addEventListener('click', () => $('jfVeil').classList.remove('on'));
+$('jfVeil').addEventListener('click', e => { if (e.target === $('jfVeil')) $('jfVeil').classList.remove('on'); });
+
+$('jfForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const status = $('jfStatus');
+  status.className = 'jf-status';
+  status.textContent = 'Connecting\u2026';
+  try {
+    const data = await jellyfinConnect($('jfUrl').value.trim(), $('jfUser').value.trim(), $('jfPass').value);
+    $('jfPass').value = '';
+    status.textContent = `Connected as ${data.User.Name}.`;
+    status.classList.add('ok');
+    $('jfForget').hidden = false;
+    toast(`Connected to ${data.User.Name}\u2019s server`);
+    switchTab(currentTab);
+  } catch (err) {
+    status.textContent = err.message;
+    status.classList.add('bad');
+    log(`jellyfin: connect failed — ${err.message}`);
+  }
+});
+
+$('jfForget').addEventListener('click', () => {
+  saveJellyfin(null);
+  $('jfStatus').textContent = 'Disconnected.';
+  $('jfStatus').className = 'jf-status';
+  $('jfForget').hidden = true;
+  $('jfPass').value = '';
+  toast('Server disconnected');
+  switchTab(currentTab);
+});
+
+/* ---------- Internet Archive: real files, real player ----------
+
+   Everything else in SOURCES hands back a webpage. Archive hands back an MP4
+   with CORS open and byte-range support, so it loads into a plain <video>.
+   The page can then read currentTime — which is the only reason resume and
+   Continue Watching are possible on this source and on no other. */
+
+const PROGRESS_KEY = 'atlas_cinema_progress';
+const archiveCache = new Map();
+
+function readProgress() {
+  try { return JSON.parse(cinemaStore.getItem(PROGRESS_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+function saveProgress(item, seconds, duration) {
+  if (!item || !duration || seconds < 30) return;      // ignore a stray tap near the start
+  const all = readProgress();
+  // Finished titles drop out rather than lingering at 99%.
+  if (seconds / duration > 0.95) delete all[memoryKey(item)];
+  else all[memoryKey(item)] = { at: Math.floor(seconds), of: Math.floor(duration), saved: Date.now() };
+  cinemaStore.setItem(PROGRESS_KEY, JSON.stringify(all));
+}
+
+function progressFor(item) {
+  return item ? readProgress()[memoryKey(item)] || null : null;
+}
+
+/* Archive's search is fuzzy: querying a series title happily returns fan
+   uploads, parodies and unrelated clips that merely share a word. Playing one
+   of those as if it were the real thing is worse than finding nothing, so a
+   hit has to survive a normalised title comparison before it is used. */
+
+function normaliseTitle(text) {
+  return String(text)
+    .toLowerCase()
+    .replace(/\b(the|a|an)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function titlesMatch(wanted, candidate) {
+  const a = normaliseTitle(wanted);
+  const b = normaliseTitle(candidate);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  // Allow a subtitle or a release tag, but not an arbitrary superstring:
+  // "his girl friday" may match "his girl friday 1940 restored", never
+  // "the walking dead parody by some youtuber".
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  return longer.startsWith(shorter) && longer.length - shorter.length <= 18;
+}
+
+/* Resolution runs in Swift: it is a search, a title match and a metadata read,
+   with a circuit breaker so a failing Archive stops being asked. The page keeps
+   the cache of answers it already has and awaits the rest by requestId. */
+const archivePending = new Map();
+
+window.atlasArchiveResult = function (json) {
+  let payload;
+  try { payload = JSON.parse(json); } catch (e) { return; }
+  const waiting = archivePending.get(payload.requestId);
+  if (!waiting) return;
+  archivePending.delete(payload.requestId);
+
+  if (payload.error) { waiting.reject(new Error(payload.error)); return; }
+  waiting.resolve(payload.found
+    ? { id: payload.id, title: payload.title, url: payload.url }
+    : null);
+};
+
+async function findOnArchive(item) {
+  const key = memoryKey(item);
+  if (archiveCache.has(key)) return archiveCache.get(key);
+
+  const title = titleOf(item);
+  const year = yearOf(item);
+  log(`archive: searching "${title}"${year ? ' (' + year + ')' : ''}`);
+
+  if (!window.webkit || !window.webkit.messageHandlers ||
+      !window.webkit.messageHandlers.atlasBridge) {
+    throw new Error('Archive lookups need the ATLAS app');
+  }
+
+  const requestId = `archive-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const found = await new Promise((resolve, reject) => {
+    // Swift answers every request, including misses, but a timeout keeps a
+    // dropped reply from leaving the page on its spinner forever.
+    const timer = setTimeout(() => {
+      archivePending.delete(requestId);
+      reject(new Error('Archive search timed out'));
+    }, 30000);
+
+    archivePending.set(requestId, {
+      resolve: (value) => { clearTimeout(timer); resolve(value); },
+      reject: (err) => { clearTimeout(timer); reject(err); }
+    });
+
+    toBridge({ action: 'archiveResolve', requestId, title, year, key });
+  });
+
+  archiveCache.set(key, found);
+  log(found ? `archive: matched ${found.id} ("${found.title}")`
+            : 'archive: no match');
+  return found;
+}
+
+async function loadArchive(item) {
+  const video = $('nvideo');
+  $('frame').hidden = true;
+  $('frame').src = 'about:blank';
+  video.hidden = false;
+  videoControls.attach();
+
+  if (isSeries(item)) {
+    setState('dead', {
+      mark: '\u2726',
+      title: 'Archive does not carry series',
+      body: 'The Archive holds public-domain films. Searching it for a current series returns fan uploads and clips, not the show.',
+      actions: [['Back to ' + SOURCES[0].label, () => useSource(SOURCES[0].id, false)]]
+    });
+    return;
+  }
+
+  setState('loading', { title: 'Searching the Internet Archive\u2026', body: titleOf(item) });
+
+  let found;
+  try {
+    found = await findOnArchive(item);
+  } catch (err) {
+    log(`archive: search failed \u2014 ${err.message}`);
+    failState(`The Archive search failed: ${err.message}`, { id: 'archive', label: 'Archive' });
+    return;
+  }
+
+  if (!found) {
+    log('archive: no public-domain copy');
+    setState('dead', {
+      mark: '\u2726',
+      title: 'Not on the Internet Archive',
+      body: 'The Archive carries public-domain films, so anything still in copyright will not be here. The other sources cover those.',
+      actions: [['Back to ' + SOURCES[0].label, () => useSource(SOURCES[0].id, false)]]
+    });
+    return;
+  }
+
+  video.src = found.url;
+
+  const resume = progressFor(item);
+  video.onloadedmetadata = () => {
+    if (resume && resume.at < video.duration - 60) {
+      video.currentTime = resume.at;
+      toast(`Resuming from ${formatClock(resume.at)}`);
+      log(`archive: resumed at ${resume.at}s`);
+    }
+    clearTimers();
+    clearState();
+    log(`archive: playing ${found.id} (${Math.floor(video.duration)}s)`);
+  };
+
+  video.onerror = () => {
+    log(`archive: video element failed for ${found.id}`);
+    failState('The file would not play. It may be a format this Mac cannot decode.',
+              { id: 'archive', label: 'Archive' });
+  };
+}
+
+function formatClock(seconds) {
+  const h = Math.floor(seconds / 3600), m = Math.floor(seconds % 3600 / 60);
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+/* Throttled: timeupdate fires ~4x a second and this writes to localStorage. */
+let lastSaved = 0;
+$('nvideo').addEventListener('timeupdate', () => {
+  const video = $('nvideo');
+  if (!currentItem || Date.now() - lastSaved < 5000) return;
+  lastSaved = Date.now();
+  saveProgress(currentItem, video.currentTime, video.duration);
+  jellyfinReport('/Progress', currentJellyfinId, video.currentTime, video.paused);
+});
+
+/* ---------- where to watch (TMDB) ---------- */
+
+async function loadProviders(item) {
+  const row = $('providers');
+  row.hidden = true;
+  row.innerHTML = '';
+  try {
+    const kind = isSeries(item) ? 'tv' : 'movie';
+    const data = await tmdb(`/${kind}/${item.id}/watch/providers`);
+    const region = (data.results || {}).US;
+    if (!region) return;
+
+    // Subscription services only. Rent and buy listings turned this into a
+    // storefront, which is the opposite of what Cinema is for.
+    const seen = new Set();
+    const names = [];
+    (region.flatrate || []).forEach(p => {
+      if (seen.has(p.provider_id)) return;
+      seen.add(p.provider_id);
+      names.push(p.provider_name);
+    });
+    if (!names.length) return;
+
+    row.innerHTML = '<span class="providers__label">Also on</span> ' +
+      names.slice(0, 6).map(name =>
+        `<a class="provider" href="${escapeHtml(region.link)}" target="_blank" rel="noreferrer">${escapeHtml(name)}</a>`
+      ).join(' ');
+    row.hidden = false;
+  } catch (err) {
+    log(`providers: ${err.message}`);
+  }
+}
+
+function loadPlayer(isRetry) {
+  if (!currentItem) return;
+  const src = SOURCES.find(s => s.id === currentSource) || SOURCES[0];
+
+  // A native source owns the <video>; every other source owns the iframe.
+  if (src.native) {
+    clearTimers();
+    if (src.jellyfin) loadJellyfin(currentItem); else loadArchive(currentItem);
+    return;
+  }
+  $('nvideo').hidden = true;
+  $('nvideo').removeAttribute('src');
+  $('nvideo').load();
+  $('frame').hidden = false;
+  videoControls.detach();
+  const url = isSeries(currentItem)
+    ? src.tv(currentItem.id, currentSeason, currentEpisode)
+    : src.movie(currentItem.id);
+
+  clearTimers();
+  if (!isRetry) retriedOnce = false;
+  loadStartedAt = Date.now();
+
+  log(`${isRetry ? 'retry' : 'load'} ${src.label} \u2192 ${url}`);
+  setState('loading', { title: `Contacting ${src.label}\u2026`, body: titleOf(currentItem) });
+
+  $('frame').src = url;
+
+  // Blank for a while is normal for these hosts; say so rather than sit silent.
+  slowTimer = setTimeout(() => {
+    log(`slow: ${src.label} still blank after ${SLOW_AFTER}ms`);
+    setState('loading', {
+      title: `${src.label} is taking a while`,
+      body: 'Still waiting for a response. This host may be overloaded or blocked.',
+      actions: [['Try the next source', () => $('srcBad').click()]]
+    });
+  }, SLOW_AFTER);
+
+  // Never fired load: one silent retry (these hosts fail transiently), then stop.
+  deadTimer = setTimeout(() => {
+    if (!retriedOnce) {
+      retriedOnce = true;
+      log(`no load event after ${DEAD_AFTER}ms \u2014 retrying once`);
+      loadPlayer(true);
+      return;
+    }
+    log(`gave up on ${src.label} after retry`);
+    loadStartedAt = 0;
+    failState('No response after two attempts. The host is likely blocked or offline.', src);
+  }, DEAD_AFTER);
+
+  // Runs alongside the timers — a hard failure here beats waiting 18 seconds.
+  probe(url, src.label).then(reachable => {
+    if (!reachable && loadStartedAt) {
+      clearTimers();
+      loadStartedAt = 0;
+      failState('The host could not be reached at all \u2014 offline, blocked, or its domain has moved.', src);
+    }
+  });
+}
+
+function openSheet(item) {
+  if (!item) return;
+  currentItem = item;
+  currentSeason = 1;
+  currentEpisode = 1;
+  currentDetails = null;
+
+  $('sheetTitle').textContent = titleOf(item);
+  $('overview').textContent = item.overview || 'No synopsis available.';
+  $('facts').innerHTML = '';
+  $('extras').innerHTML = '<div class="empty__body">Loading extras…</div>';
+  $('cast').innerHTML = '<div class="empty__body">Loading cast…</div>';
+  $('related').innerHTML = '<div class="empty__body">Loading related titles…</div>';
+  document.querySelector('.sheet').style.setProperty('--ambient-h', ambientHue(item));
+  switchDetail('details');
+  updateSheetLibraryActions();
+  currentSource = pickSource(item);
+  renderSources();
+  $('veil').classList.add('on');
+  clearInterval(rotateTimer);   // no slide changes behind the player
+
+  const tv = isSeries(item);
+  $('episodesTab').hidden = !tv;
+  fetchTitleDetails(item);
+  loadProviders(item);
+  loadPlayer();
+}
+
+function closeSheet() {
+  // Save where we got to before tearing the element down, or the last few
+  // minutes of watching are lost on close.
+  const video = $('nvideo');
+  if (currentItem && !video.hidden && video.currentTime) {
+    saveProgress(currentItem, video.currentTime, video.duration);
+  }
+  if (currentJellyfinId) {
+    jellyfinReport('/Stopped', currentJellyfinId, video.currentTime, false);
+    currentJellyfinId = null;
+  }
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  video.hidden = true;
+
+  $('veil').classList.remove('on');
+  $('frame').hidden = false;
+  videoControls.detach();
+  $('frame').src = '';   // the iframe keeps playing otherwise
+  clearTimers();
+  loadStartedAt = 0;
+  $('pstate').hidden = true;
+  currentItem = null;
+  currentDetails = null;
+  if (!$('hero').hidden) restartRotation();
+}
+
+$('sheetClose').addEventListener('click', closeSheet);
+$('veil').addEventListener('click', event => { if (event.target === $('veil')) closeSheet(); });
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  if ($('personVeil').classList.contains('on')) { closePerson(); return; }
+  if ($('playlistVeil').classList.contains('on')) { closePlaylistDialog(); return; }
+  if ($('veil').classList.contains('on')) closeSheet();
+});
+
+$('sheetSave').addEventListener('click', () => {
+  const item = currentItem;
+  const added = toggleCollection('watchLater', item);
+  toast(`${added ? 'Saved' : 'Removed'} “${titleOf(item)}” ${added ? 'to' : 'from'} Watch Later`);
+  updateSheetLibraryActions();
+  if (currentTab === 'library') renderLibrary();
+});
+
+$('sheetFavorite').addEventListener('click', () => {
+  const item = currentItem;
+  const added = toggleCollection('favorites', item);
+  toast(`${added ? 'Added' : 'Removed'} “${titleOf(item)}” ${added ? 'to' : 'from'} Favorites`);
+  updateSheetLibraryActions();
+  if (currentTab === 'library') renderLibrary();
+});
+
+$('sheetPlaylist').addEventListener('click', () => openPlaylistDialog(currentItem));
+
+function switchDetail(name) {
+  if (name === 'episodes' && (!currentItem || !isSeries(currentItem))) name = 'details';
+  document.querySelectorAll('#detailTabs [data-detail]').forEach(button =>
+    button.classList.toggle('on', button.dataset.detail === name));
+  document.querySelectorAll('[data-panel]').forEach(panel => { panel.hidden = panel.dataset.panel !== name; });
+}
+
+$('detailTabs').addEventListener('click', event => {
+  const button = event.target.closest('[data-detail]');
+  if (button) switchDetail(button.dataset.detail);
+});
+
+function renderFacts(data) {
+  const facts = [];
+  const minutes = data.runtime || (data.episode_run_time || [])[0];
+  if (minutes) facts.push(`${minutes} min`);
+  if (data.status) facts.push(data.status);
+  if (data.number_of_seasons) facts.push(`${data.number_of_seasons} season${data.number_of_seasons === 1 ? '' : 's'}`);
+  (data.genres || []).slice(0, 4).forEach(genre => facts.push(genre.name));
+  $('facts').innerHTML = facts.map(fact => `<span class="fact">${escapeHtml(fact)}</span>`).join('');
+}
+
+function renderExtras(videos) {
+  const allowed = ['Trailer', 'Teaser', 'Clip', 'Behind the Scenes', 'Featurette', 'Interview'];
+  const items = (videos || []).filter(video => video.site === 'YouTube' && allowed.includes(video.type)).slice(0, 12);
+  $('extrasCount').textContent = `${items.length}`;
+  $('extras').innerHTML = items.length ? items.map(video => `
+    <button class="media-card" data-video="${escapeHtml(video.key)}" data-video-title="${escapeHtml(video.name)}">
+      <div class="media-card__art" style="background-image:url('https://i.ytimg.com/vi/${encodeURIComponent(video.key)}/hqdefault.jpg')"></div>
+      <div class="media-card__body"><div class="media-card__type">${escapeHtml(video.type)}</div><div class="media-card__title">${escapeHtml(video.name)}</div></div>
+    </button>`).join('') : '<div class="empty__body">No official extras are available for this title.</div>';
+}
+
+function renderCast(credits) {
+  const cast = (credits && credits.cast || []).slice(0, 18);
+  $('castCount').textContent = `${cast.length}`;
+  $('cast').innerHTML = cast.length ? cast.map(person => `
+    <button class="cast-card" data-person="${person.id}">
+      <img src="${person.profile_path ? IMG + person.profile_path : ''}" alt="">
+      <span><span class="cast-card__name">${escapeHtml(person.name)}</span><span class="cast-card__role">${escapeHtml(person.character || 'Cast')}</span></span>
+    </button>`).join('') : '<div class="empty__body">Cast information is unavailable.</div>';
+}
+
+function titleStripItems(items, limit) {
+  const seen = new Set();
+  return (items || [])
+    .filter(item => {
+      if (!item || !item.poster_path || item.media_type === 'person') return false;
+      const key = itemKey(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => (b.vote_count || b.popularity || 0) - (a.vote_count || a.popularity || 0))
+    .slice(0, limit || 12);
+}
+
+function renderTitleStrip(target, items, emptyMessage) {
+  const titles = titleStripItems(items, 12);
+  remember(titles);
+  target.innerHTML = titles.length ? titles.map(item => `
+    <button class="mini-title" data-related-key="${escapeHtml(itemKey(item))}">
+      <img src="${IMG}${item.poster_path}" alt="">
+      <span class="mini-title__name">${escapeHtml(titleOf(item))}</span>
+      <span class="mini-title__meta">${escapeHtml(yearOf(item) || '—')} · ${isSeries(item) ? 'SERIES' : 'FILM'}</span>
+    </button>`).join('') : `<div class="empty__body">${escapeHtml(emptyMessage)}</div>`;
+  return titles.length;
+}
+
+function renderRelated(data) {
+  const recommendations = data.recommendations && data.recommendations.results || [];
+  const similar = data.similar && data.similar.results || [];
+  const items = [...recommendations, ...similar].map(item => ({ ...item, media_type: item.media_type || (isSeries(currentItem) ? 'tv' : 'movie') }));
+  $('relatedCount').textContent = `${renderTitleStrip($('related'), items, 'No related titles are available.')}`;
+}
+
+async function fetchTitleDetails(item) {
+  const expectedKey = itemKey(item);
+  try {
+    const kind = isSeries(item) ? 'tv' : 'movie';
+    const data = await tmdb(`/${kind}/${item.id}`, { append_to_response: 'credits,videos,recommendations,similar' });
+    if (!currentItem || itemKey(currentItem) !== expectedKey) return;
+    currentDetails = data;
+    $('overview').textContent = data.overview || item.overview || 'No synopsis available.';
+    renderFacts(data);
+    renderExtras(data.videos && data.videos.results);
+    renderCast(data.credits);
+    renderRelated(data);
+    if (isSeries(item)) populateSeasons(data.seasons || []);
+  } catch {
+    $('extras').innerHTML = '<div class="empty__body">Could not load extras.</div>';
+    $('cast').innerHTML = '<div class="empty__body">Could not load cast.</div>';
+    $('related').innerHTML = '<div class="empty__body">Could not load related titles.</div>';
+  }
+}
+
+$('extras').addEventListener('click', event => {
+  const button = event.target.closest('[data-video]');
+  if (!button) return;
+  window.location.href = `https://www.youtube.com/watch?v=${encodeURIComponent(button.dataset.video)}`;
+  toast(`Opening “${button.dataset.videoTitle}”`);
+});
+
+$('cast').addEventListener('click', async event => {
+  const button = event.target.closest('[data-person]');
+  if (!button) return;
+  $('personName').textContent = 'Loading…';
+  $('personPhoto').removeAttribute('src');
+  $('personFacts').textContent = '';
+  $('personBio').textContent = '';
+  $('personCreditsCount').textContent = '';
+  $('personCredits').innerHTML = '<div class="empty__body">Loading other work…</div>';
+  $('personVeil').classList.add('on');
+  try {
+    const person = await tmdb(`/person/${button.dataset.person}`, { append_to_response: 'combined_credits' });
+    $('personName').textContent = person.name || 'Unknown';
+    $('personPhoto').src = person.profile_path ? `${IMG}${person.profile_path}` : '';
+    $('personFacts').textContent = [person.known_for_department, person.birthday, person.place_of_birth].filter(Boolean).join(' · ');
+    $('personBio').textContent = person.biography || 'No biography is available.';
+    $('personVeil').style.setProperty('--ambient-h', ambientHue(person));
+    const work = person.combined_credits && person.combined_credits.cast || [];
+    $('personCreditsCount').textContent = `${renderTitleStrip($('personCredits'), work, 'No additional credits are available.')}`;
+  } catch {
+    $('personName').textContent = 'Cast details unavailable';
+    $('personCredits').innerHTML = '<div class="empty__body">Could not load other work.</div>';
+  }
+});
+
+function openRelatedTitle(event) {
+  const button = event.target.closest('[data-related-key]');
+  if (!button) return;
+  const item = cardIndex.get(button.dataset.relatedKey);
+  if (!item) return;
+  closePerson();
+  openSheet(item);
+}
+
+$('related').addEventListener('click', openRelatedTitle);
+$('personCredits').addEventListener('click', openRelatedTitle);
+
+function closePerson() { $('personVeil').classList.remove('on'); }
+$('personClose').addEventListener('click', closePerson);
+$('personVeil').addEventListener('click', event => { if (event.target === $('personVeil')) closePerson(); });
+
+function updateSheetLibraryActions() {
+  if (!currentItem) return;
+  const favorite = inCollection('favorites', currentItem);
+  const later = inCollection('watchLater', currentItem);
+  $('sheetFavorite').classList.toggle('on', favorite);
+  $('sheetFavorite').title = favorite ? 'Remove from favorites' : 'Add to favorites';
+  $('sheetFavorite').setAttribute('aria-label', $('sheetFavorite').title);
+  $('sheetSave').classList.toggle('on', later);
+  $('sheetSave').title = later ? 'Remove from Watch Later' : 'Add to Watch Later';
+  $('sheetSave').setAttribute('aria-label', $('sheetSave').title);
+  $('sheetPlaylist').classList.toggle('on', library.playlists.some(list => inPlaylist(list, currentItem)));
+}
+
+function renderPlaylistOptions() {
+  if (!playlistItem) {
+    $('playlistOptions').innerHTML = '';
+    return;
+  }
+  $('playlistOptions').innerHTML = library.playlists.length
+    ? library.playlists.map(list => {
+        const included = inPlaylist(list, playlistItem);
+        return `<button class="playlist-option${included ? ' on' : ''}" data-playlist="${escapeHtml(list.id)}">` +
+          `<span class="playlist-option__mark">${included ? '✓' : ''}</span>` +
+          `<span class="playlist-option__name">${escapeHtml(list.name)}</span>` +
+          `<span class="playlist-option__count">${list.items.length}</span></button>`;
+      }).join('')
+    : '<p class="playlist-dialog__hint">No playlists yet. Create your first one below.</p>';
+}
+
+function openPlaylistDialog(item) {
+  playlistItem = item;
+  $('playlistTitle').textContent = item ? 'Add to playlist' : 'Create a playlist';
+  $('playlistHint').textContent = item
+    ? `Choose where to save “${titleOf(item)}”.`
+    : 'Name a collection for any mood, marathon, or movie night.';
+  renderPlaylistOptions();
+  $('playlistName').value = '';
+  $('playlistVeil').classList.add('on');
+  setTimeout(() => $('playlistName').focus(), 0);
+}
+
+function closePlaylistDialog() {
+  $('playlistVeil').classList.remove('on');
+  playlistItem = null;
+  updateSheetLibraryActions();
+  if (currentTab === 'library') renderLibrary();
+}
+
+$('playlistClose').addEventListener('click', closePlaylistDialog);
+$('playlistVeil').addEventListener('click', event => {
+  if (event.target === $('playlistVeil')) closePlaylistDialog();
+});
+$('playlistOptions').addEventListener('click', event => {
+  const button = event.target.closest('[data-playlist]');
+  if (!button || !playlistItem) return;
+  togglePlaylist(button.dataset.playlist, playlistItem);
+  renderPlaylistOptions();
+});
+$('playlistCreate').addEventListener('submit', event => {
+  event.preventDefault();
+  const name = $('playlistName').value;
+  const before = library.playlists.length;
+  const list = createPlaylist(name);
+  if (!list) return;
+  if (playlistItem && !inPlaylist(list, playlistItem)) togglePlaylist(list.id, playlistItem);
+  $('playlistName').value = '';
+  renderPlaylistOptions();
+  toast(before === library.playlists.length ? `“${list.name}” already exists` : `Created “${list.name}”`);
+  if (!playlistItem) {
+    libraryView = list.id;
+    closePlaylistDialog();
+  }
+});
+
+/* ---------- seasons ---------- */
+
+function populateSeasons(allSeasons) {
+  const select = $('seasonSelect');
+  select.innerHTML = '';
+  const seasons = allSeasons.filter(season => season.season_number > 0);
+  seasons.forEach(season => {
+    const option = document.createElement('option');
+    option.value = season.season_number;
+    option.textContent = `Season ${season.season_number} · ${season.episode_count} ep`;
+    select.appendChild(option);
+  });
+  if (seasons.length) loadSeason(seasons[0].season_number);
+}
+
+$('seasonSelect').addEventListener('change', event => loadSeason(Number(event.target.value)));
+
+async function loadSeason(seasonNumber) {
+  if (!currentItem) return;
+  currentSeason = seasonNumber;
+  const showId = currentItem.id;
+
+  try {
+    const data = await tmdb(`/tv/${showId}/season/${seasonNumber}`);
+    // The sheet may have been closed, or another show opened, while this was in
+    // flight — dropping a stale response keeps the wrong episodes out.
+    if (!currentItem || currentItem.id !== showId) return;
+
+    const episodes = data.episodes || [];
+    currentEpisode = episodes.length ? episodes[0].episode_number : 1;
+
+    $('eps').innerHTML = episodes.map(ep => `
+      <div class="ep${ep.episode_number === currentEpisode ? ' on' : ''}" data-ep="${ep.episode_number}">
+        <img class="ep__still" src="${ep.still_path ? IMG + ep.still_path : ''}" alt="">
+        <div><div class="ep__name"><span class="ep__no">E${ep.episode_number}</span>${escapeHtml(ep.name || '')}</div>
+        <div class="ep__desc">${escapeHtml(ep.overview || 'No synopsis.')}</div>
+        <div class="ep__meta">${escapeHtml([ep.air_date, ep.runtime ? ep.runtime + ' min' : '', ep.vote_average ? '★ ' + ep.vote_average.toFixed(1) : ''].filter(Boolean).join(' · '))}</div></div>
+      </div>`).join('');
+
+    if (episodes.length) loadPlayer();
+  } catch {
+    toast('Could not load episodes', true);
+  }
+}
+
+$('eps').addEventListener('click', event => {
+  const ep = event.target.closest('.ep');
+  if (!ep) return;
+  currentEpisode = Number(ep.dataset.ep);
+  document.querySelectorAll('#eps .ep').forEach(el => el.classList.remove('on'));
+  ep.classList.add('on');
+  loadPlayer();
+});
+
+/* ---------- category browsing ---------- */
+/* A rail shows the first page of something TMDB will happily keep paging. This
+   opens the whole list in the results grid, with more fetched on demand rather
+   than all at once — 20 posters is already a lot of image traffic. */
+let category = null;
+
+function railFor(position) {
+  const tabRails = currentTab === 'home'
+    ? [...(jellyfinConnected() ? [{ title: `On ${jellyfin.name}\u2019s server`, jellyfin: true }] : []),
+       ...personalRails(), ...TABS.home.rails]
+    : (TABS[currentTab] || {}).rails || [];
+  return tabRails[position] || null;
+}
+
+async function openCategory(position) {
+  const rail = railFor(position);
+  if (!rail) return;
+
+  // Only TMDB paths page. A Jellyfin or a locally-assembled rail is already
+  // showing everything it has, so there is nothing more to open.
+  if (!rail.path) {
+    toast(`${rail.title} is already showing everything`);
+    return;
+  }
+
+  clearInterval(rotateTimer);
+  category = { rail, page: 0, items: [], totalPages: 1, loading: false };
+
+  $('hero').hidden = true;
+  $('rails').hidden = true;
+  $('libraryTools').hidden = true;
+  $('results').hidden = false;
+  $('resultsTitle').textContent = rail.title;
+  $('resultsCount').textContent = 'Loading\u2026';
+  $('resultsGrid').innerHTML = skeletons(18);
+
+  await loadCategoryPage();
+}
+
+async function loadCategoryPage() {
+  if (!category || category.loading) return;
+  if (category.page >= category.totalPages) return;
+  category.loading = true;
+
+  const { rail } = category;
+  try {
+    const data = await tmdb(rail.path, { page: String(category.page + 1) });
+    category.page += 1;
+    // TMDB caps paging at 500 regardless of what it reports.
+    category.totalPages = Math.min(data.total_pages || 1, 500);
+
+    const fresh = (data.results || [])
+      .map(item => rail.kind ? { ...item, media_type: rail.kind } : item)
+      .filter(item => item.poster_path);
+    category.items = uniqueItems([...category.items, ...fresh]);
+    remember(category.items);
+
+    $('resultsCount').textContent =
+      `${category.items.length} of ${data.total_results || category.items.length}`;
+    $('resultsGrid').innerHTML =
+      category.items.map(item => cardHtml(item)).join('') +
+      (category.page < category.totalPages
+        ? `<button class="more" id="catMore">Load more</button>`
+        : '');
+  } catch (err) {
+    $('resultsCount').textContent = '';
+    $('resultsGrid').innerHTML =
+      `<div class="empty"><div class="empty__title">Could not load ${escapeHtml(rail.title)}</div>` +
+      `<div class="empty__body">${escapeHtml(String(err.message || err))}</div></div>`;
+  } finally {
+    category.loading = false;
+  }
+}
+
+$('resultsGrid').addEventListener('click', event => {
+  if (event.target.closest('#catMore')) {
+    event.target.closest('#catMore').textContent = 'Loading\u2026';
+    loadCategoryPage();
+  }
+});
+
+/* ---------- ATLAS video controls ---------- */
+/* Drives #nvideo only. Embed sources render a provider's player inside a
+   cross-origin iframe, which cannot be read or restyled from here, so the bar
+   is shown for native playback and hidden for everything else. */
+const videoControls = (function () {
+  const video = $('nvideo');
+  const bar = $('vc');
+  if (!video || !bar) return { attach() {}, detach() {} };
+
+  const playBtn = $('vcPlay'), playIcon = $('vcPlayIcon');
+  const scrub = $('vcScrub'), played = $('vcPlayed'), buffer = $('vcBuffer'), knob = $('vcKnob');
+  const timeLabel = $('vcTime'), vol = $('vcVol'), muteIcon = $('vcMuteIcon');
+  const rateBtn = $('vcRate'), ccBtn = $('vcCC');
+
+  const PLAY_PATH = 'M8 5v14l11-7z';
+  const PAUSE_PATH = 'M7 5h4v14H7zM13 5h4v14h-4z';
+  const SPEAKER = 'M4 9v6h4l5 5V4L8 9H4z';
+  const RATES = [1, 1.25, 1.5, 1.75, 2, 0.75];
+
+  let scrubbing = false;
+  let idleTimer = null;
+
+  function clock(seconds) {
+    if (!isFinite(seconds) || seconds < 0) return '0:00';
+    const total = Math.floor(seconds);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const sec = String(total % 60).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+  }
+
+  function paint() {
+    const dur = video.duration;
+    const frac = (isFinite(dur) && dur > 0) ? video.currentTime / dur : 0;
+    const pct = Math.max(0, Math.min(1, frac)) * 100;
+    played.style.width = pct + '%';
+    knob.style.left = pct + '%';
+    timeLabel.textContent = `${clock(video.currentTime)} / ${clock(dur)}`;
+    scrub.setAttribute('aria-valuenow', String(Math.round(pct)));
+    scrub.setAttribute('aria-valuetext', clock(video.currentTime));
+
+    if (video.buffered.length && isFinite(dur) && dur > 0) {
+      // The range that covers the playhead, not merely the last one appended.
+      for (let i = 0; i < video.buffered.length; i++) {
+        if (video.buffered.start(i) <= video.currentTime && video.currentTime <= video.buffered.end(i)) {
+          buffer.style.width = Math.min(1, video.buffered.end(i) / dur) * 100 + '%';
+          break;
+        }
+      }
+    }
+  }
+
+  function paintPlay() {
+    playIcon.firstElementChild.setAttribute('d', video.paused ? PLAY_PATH : PAUSE_PATH);
+    playBtn.setAttribute('aria-label', video.paused ? 'Play' : 'Pause');
+  }
+
+  function paintVolume() {
+    vol.value = video.muted ? 0 : video.volume;
+    const quiet = video.muted || video.volume === 0;
+    muteIcon.innerHTML = quiet
+      ? `<path d="${SPEAKER}"/><path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>`
+      : `<path d="${SPEAKER}"/><path d="M16.5 12a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/>`;
+    $('vcMute').setAttribute('aria-label', quiet ? 'Unmute' : 'Mute');
+  }
+
+  function seekFromPointer(event) {
+    const box = scrub.getBoundingClientRect();
+    if (!box.width || !isFinite(video.duration)) return;
+    const frac = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
+    video.currentTime = frac * video.duration;
+    paint();
+  }
+
+  function wake() {
+    bar.classList.add('is-shown');
+    $('player') && $('player').classList.remove('is-idle');
+    clearTimeout(idleTimer);
+    // Only hide while actually playing: a paused video keeps its controls.
+    idleTimer = setTimeout(() => {
+      if (!video.paused) bar.classList.remove('is-shown');
+    }, 2600);
+  }
+
+  function toggle() { video.paused ? video.play().catch(() => {}) : video.pause(); }
+
+  function nudge(seconds) {
+    if (!isFinite(video.duration)) return;
+    video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + seconds));
+    wake();
+  }
+
+  playBtn.addEventListener('click', toggle);
+  $('vcBack').addEventListener('click', () => nudge(-10));
+  $('vcFwd').addEventListener('click', () => nudge(10));
+  $('vcMute').addEventListener('click', () => { video.muted = !video.muted; });
+  vol.addEventListener('input', () => { video.volume = Number(vol.value); video.muted = Number(vol.value) === 0; });
+
+  rateBtn.addEventListener('click', () => {
+    const next = RATES[(RATES.indexOf(video.playbackRate) + 1) % RATES.length] || 1;
+    video.playbackRate = next;
+    rateBtn.textContent = (next % 1 ? next : next + '') + '×';
+  });
+
+  ccBtn.addEventListener('click', () => {
+    const tracks = Array.from(video.textTracks || []);
+    if (!tracks.length) return;
+    const on = tracks.some(t => t.mode === 'showing');
+    tracks.forEach((t, i) => { t.mode = (!on && i === 0) ? 'showing' : 'disabled'; });
+    ccBtn.style.color = on ? '' : 'var(--star)';
+  });
+
+  $('vcPiP').addEventListener('click', async () => {
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await video.requestPictureInPicture();
+    } catch (err) { log(`player: picture in picture unavailable — ${err.message}`); }
+  });
+
+  $('vcFull').addEventListener('click', async () => {
+    const target = $('player') || video.parentElement;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await target.requestFullscreen();
+    } catch (err) { log(`player: fullscreen refused — ${err.message}`); }
+  });
+
+  scrub.addEventListener('pointerdown', event => {
+    scrubbing = true;
+    scrub.setPointerCapture(event.pointerId);
+    seekFromPointer(event);
+  });
+  scrub.addEventListener('pointermove', event => { if (scrubbing) seekFromPointer(event); });
+  scrub.addEventListener('pointerup', event => {
+    scrubbing = false;
+    try { scrub.releasePointerCapture(event.pointerId); } catch (e) {}
+  });
+  scrub.addEventListener('keydown', event => {
+    if (event.key === 'ArrowLeft') { nudge(-5); event.preventDefault(); }
+    if (event.key === 'ArrowRight') { nudge(5); event.preventDefault(); }
+  });
+
+  video.addEventListener('timeupdate', paint);
+  video.addEventListener('progress', paint);
+  video.addEventListener('loadedmetadata', () => {
+    paint();
+    // Only offer subtitles when the file actually carries some.
+    ccBtn.hidden = !(video.textTracks && video.textTracks.length);
+  });
+  video.addEventListener('play', () => { paintPlay(); wake(); });
+  video.addEventListener('pause', () => { paintPlay(); bar.classList.add('is-shown'); });
+  video.addEventListener('volumechange', paintVolume);
+  video.addEventListener('click', toggle);
+
+  const player = $('player') || video.parentElement;
+  if (player) player.addEventListener('pointermove', wake);
+
+  // Keyboard, but never while the user is typing into something.
+  document.addEventListener('keydown', event => {
+    if (video.hidden) return;
+    const tag = (event.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || event.target.isContentEditable) return;
+
+    if (event.key === ' ' || event.key === 'k') { toggle(); event.preventDefault(); }
+    else if (event.key === 'ArrowLeft' || event.key === 'j') { nudge(-10); event.preventDefault(); }
+    else if (event.key === 'ArrowRight' || event.key === 'l') { nudge(10); event.preventDefault(); }
+    else if (event.key === 'm') { video.muted = !video.muted; }
+    else if (event.key === 'f') { $('vcFull').click(); }
+    else if (event.key === 'ArrowUp') { video.volume = Math.min(1, video.volume + .05); event.preventDefault(); }
+    else if (event.key === 'ArrowDown') { video.volume = Math.max(0, video.volume - .05); event.preventDefault(); }
+    if (!video.hidden) wake();
+  });
+
+  return {
+    /* Shown only for native playback. */
+    attach() { bar.hidden = false; paint(); paintPlay(); paintVolume(); wake(); },
+    detach() { bar.hidden = true; clearTimeout(idleTimer); }
+  };
+})();
+
+/* ---------- boot ---------- */
+
+switchTab('home');
+</script>
+</body>
+</html>

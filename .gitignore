@@ -1,0 +1,31 @@
+# Build output & packaged binaries
+.build/
+.swiftpm/
+dist/
+/*.xcodeproj
+/*.xcworkspace
+
+# macOS System Files
+.DS_Store
+*.swp
+*~
+
+# Credentials, Local Databases, and Audit Ledgers
+*.db
+*.db-shm
+*.db-wal
+*.json
+*.env
+*.keychain
+Credentials/
+Secrets/
+
+# Vaults & External Contexts
+Vaults/
+Logs/
+
+# Intermediate icon sizes; regenerate from ATLAS LOGO.png with sips + iconutil.
+Design/AppIcon.iconset/
+
+# Snapshots taken before a rewrite. Local safety net, not source of truth.
+_backup/

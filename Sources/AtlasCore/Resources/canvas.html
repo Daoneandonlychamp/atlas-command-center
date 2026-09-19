@@ -1,0 +1,1360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Infinite canvas over the JSON Canvas format — the same .canvas files Obsidian
+  Canvas reads and writes, so a board made here opens there and vice versa.
+
+  The page only ever hands back `nodes` and `edges`; every other key in the file
+  is preserved by CanvasStore. Obsidian writes a top-level `metadata` object that
+  the 1.0 spec does not define, and losing it would quietly damage real files.
+
+  Like the calendar and board, this page may call into the app through a fixed
+  set of named actions. Node text is escaped before display: a canvas can come
+  from anywhere.
+
+  Pure logic sits between the marker comments for Tests/canvas_test.js.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATLAS Canvas</title>
+<style>
+/* Shared tokens, reset, controls and components arrive from atlas-theme.css /
+   atlas-components.css, injected ahead of this block. */
+:root{
+  --grid: rgba(255,255,255,.035);
+  /* The canvas draws its own hairlines a touch brighter than the default. */
+  --edge-soft: rgba(255,255,255,.07);
+}
+html,body{overflow:hidden}
+#app{display:flex;flex-direction:column;height:100%}
+
+/* ---------- toolbar ---------- */
+.bar{z-index:5;background:rgba(11,14,19,.94)}
+.bar .name{font-size:var(--fs-title);font-weight:600;max-width:260px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;letter-spacing:var(--ls-tight)}
+.bar .dirty{color:var(--gold);font-size:16px;line-height:1}
+.zoom{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--fs-micro);
+  color:var(--faint);min-width:44px;text-align:center}
+
+/* ---------- surface ---------- */
+#surface{flex:1;position:relative;overflow:hidden;cursor:default;
+  background-image:radial-gradient(var(--grid) 1px, transparent 1px);
+  background-size:24px 24px}
+#surface.panning{cursor:grabbing}
+#world{position:absolute;inset:0;transform-origin:0 0}
+#wires{position:absolute;overflow:visible;pointer-events:none;left:0;top:0;width:1px;height:1px}
+
+.node{position:absolute;border-radius:8px;padding:11px 13px;overflow:hidden;
+  background:var(--raised);border:1px solid var(--edge-soft);
+  box-shadow:0 4px 18px rgba(0,0,0,.35);cursor:grab}
+.node.sel{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold),0 8px 26px rgba(0,0,0,.5)}
+.node .body{white-space:pre-wrap;word-break:break-word;font-size:var(--fs-body);line-height:1.5;
+  color:rgba(255,255,255,.88)}
+.node .kind{font-family:var(--mono);font-size:var(--fs-micro);letter-spacing:var(--ls-micro);
+  text-transform:uppercase;color:var(--faint);margin-bottom:5px}
+.node.file .body{font-family:var(--mono);font-size:var(--fs-meta);color:var(--cyan)}
+.node.link .body{font-family:var(--mono);font-size:var(--fs-meta);color:var(--cyan)}
+.node.group{background:rgba(255,255,255,.022);border-style:dashed;box-shadow:none;
+  border-color:rgba(255,255,255,.14)}
+.node.group .body{font-size:var(--fs-label);font-weight:700;letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--muted)}
+.node textarea{width:100%;height:100%;background:transparent;border:0;outline:none;resize:none;
+  color:var(--text);font:inherit;font-size:var(--fs-body);line-height:1.5}
+.node img.thumb{display:block;width:100%;height:calc(100% - 18px);object-fit:cover;
+  border-radius:5px;background:rgba(0,0,0,.35)}
+.node.hasThumb{padding:6px 6px 0}
+.node .caption{font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);
+  padding:3px 2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .excerpt{max-height:calc(100% - 18px);overflow:hidden}
+.node .body.md h1,.node .body.md h2,.node .body.md h3{font-size:14px;font-weight:650;margin:0 0 4px}
+.node .body.md h4,.node .body.md h5,.node .body.md h6{font-size:var(--fs-body);
+  color:var(--gold-dim);margin:0 0 4px}
+.node .body.md p{margin:0 0 6px}
+.node .body.md ul,.node .body.md ol{margin:0 0 6px;padding-left:1.15em}
+.node .body.md li{margin:1px 0}
+.node .body.md code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--gold);
+  background:rgba(212,176,89,.1);padding:.05em .3em;border-radius:2px}
+.node .body.md pre{background:rgba(0,0,0,.4);padding:7px 9px;border-radius:4px;overflow:hidden;
+  margin:0 0 6px}
+.node .body.md a{color:var(--cyan)}
+.node .body.md strong{color:#fff}
+.node .handle{position:absolute;right:-1px;bottom:-1px;width:14px;height:14px;cursor:nwse-resize;
+  border-right:2px solid var(--gold-dim);border-bottom:2px solid var(--gold-dim);
+  border-bottom-right-radius:8px;opacity:0}
+.node.sel .handle{opacity:1}
+/* Ports appear on hover so a canvas at rest stays clean. */
+.port{position:absolute;width:13px;height:13px;border-radius:50%;background:var(--bg);
+  border:2px solid var(--gold-dim);opacity:0;transition:opacity .1s;cursor:crosshair}
+.node:hover .port,.node.sel .port{opacity:1}
+.port:hover{background:var(--gold);transform:scale(1.25)}
+.port.top{left:50%;top:-7px;margin-left:-6.5px}
+.port.bottom{left:50%;bottom:-7px;margin-left:-6.5px}
+.port.left{top:50%;left:-7px;margin-top:-6.5px}
+.port.right{top:50%;right:-7px;margin-top:-6.5px}
+
+.wire{fill:none;stroke:rgba(212,176,89,.5);stroke-width:1.8}
+.wire.sel{stroke:var(--gold);stroke-width:2.4}
+.wire-hit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;cursor:pointer}
+.wire-label{font-size:var(--fs-micro);fill:var(--muted);paint-order:stroke;stroke:var(--bg);
+  stroke-width:4}
+.marker{fill:rgba(212,176,89,.6)}
+
+/* ---------- selection bar ---------- */
+#selBar{position:fixed;z-index:35;display:none;align-items:center;gap:5px;padding:5px 7px;
+  border-radius:var(--r-lg);background:rgba(24,29,39,.98);border:1px solid var(--edge-soft);
+  box-shadow:0 10px 30px rgba(0,0,0,.55)}
+#selBar.on{display:flex}
+#selBar button{padding:4px 9px;border-radius:var(--r-md);font-size:var(--fs-meta);
+  color:var(--text);white-space:nowrap}
+#selBar button:hover{background:rgba(255,255,255,.09)}
+#selBar button.danger{color:var(--err)}
+#selBar button.danger:hover{background:rgba(255,59,48,.14)}
+#selBar .swatch{width:15px;height:15px;padding:0;border-radius:50%;
+  border:1px solid rgba(255,255,255,.2)}
+#selBar .swatch:hover{transform:scale(1.2)}
+#selBar .swatch.none{background:transparent;position:relative}
+#selBar .swatch.none::after{content:"";position:absolute;left:1px;right:1px;top:6.5px;height:1px;
+  background:var(--muted);transform:rotate(-45deg)}
+
+/* ---------- menu swatches (menu chrome itself is shared) ---------- */
+.menu .swatches{display:flex;gap:5px;padding:7px 10px;margin:4px 0;
+  border-top:1px solid var(--edge-soft);border-bottom:1px solid var(--edge-soft)}
+.menu .swatch{width:16px;height:16px;padding:0;border-radius:50%;
+  border:1px solid rgba(255,255,255,.18)}
+.menu .swatch:hover{transform:scale(1.18)}
+.menu .swatch.none{background:transparent;position:relative}
+.menu .swatch.none::after{content:"";position:absolute;left:1px;right:1px;top:7px;height:1px;
+  background:var(--muted);transform:rotate(-45deg)}
+
+.marquee{position:absolute;border:1px solid var(--gold-dim);background:rgba(212,176,89,.08);
+  pointer-events:none;border-radius:2px}
+.hint{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);font-size:var(--fs-meta);
+  color:var(--faint);pointer-events:none;font-family:var(--mono);letter-spacing:var(--ls-micro);
+  text-align:center;max-width:calc(100% - 32px)}
+#emptyState{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+#emptyState .atlas-empty{pointer-events:auto}
+
+/* ---------- picker ---------- */
+#picker{position:absolute;inset:0;background:rgba(0,0,0,.6);display:none;z-index:20;
+  align-items:flex-start;justify-content:center;padding-top:70px}
+#picker.on{display:flex}
+.sheet{width:460px;max-height:70%;display:flex;flex-direction:column;padding:8px}
+.sheet h3{padding:9px 11px 7px}
+.sheet .results{overflow-y:auto;min-height:0}
+.sheet button.pick{display:block;width:100%;text-align:left;padding:9px 11px;
+  border-radius:var(--r-md);font-size:var(--fs-body)}
+.sheet button.pick:hover{background:rgba(255,255,255,.06)}
+.sheet button.pick .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* An unnamed canvas is still openable, just visibly less useful. */
+.sheet button.pick.untitled .nm{color:var(--muted)}
+.sheet .nameField{width:100%;padding:9px 11px;margin:2px 0 6px;font-size:var(--fs-read);
+  color:var(--text);background:rgba(0,0,0,.35);border:1px solid var(--edge-soft);
+  border-radius:var(--r-md);outline:none}
+.sheet .nameField:focus{border-color:var(--gold-dim)}
+.sheet .where{font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Vault heading inside the results list. */
+.sheet .vault{padding:9px 11px 4px;font-size:var(--fs-micro);font-weight:700;
+  letter-spacing:var(--ls-caps);text-transform:uppercase;color:var(--gold-dim);
+  position:sticky;top:0;background:rgba(21,26,35,.98);z-index:1}
+.sheet .none{padding:14px 11px;font-size:var(--fs-meta);color:var(--faint);text-align:center}
+
+/* ---------- light mode ----------
+   The shared theme flips its tokens for a light appearance, but everything the
+   canvas paints itself was written against the dark ground: white hairlines,
+   near-black chrome, gold on charcoal. On cream those go from invisible to
+   unreadable, so each one is restated here rather than left to inherit. */
+@media (prefers-color-scheme: light) {
+  :root {
+    /* Dots and hairlines have to be ink on cream, not white on black. */
+    --grid: rgba(29, 27, 24, .10);
+    --edge-soft: rgba(29, 27, 24, .14);
+  }
+
+  .bar { background: rgba(244, 240, 233, .92); }
+
+  /* Cards sit on a light board, so the lift comes from a soft shadow rather
+     than a bright fill. */
+  .node { box-shadow: 0 2px 10px rgba(35, 36, 39, .10); }
+  .node.sel { box-shadow: 0 0 0 1px var(--gold), 0 6px 20px rgba(35, 36, 39, .18); }
+  .node .body { color: var(--text); }
+  .node.group { background: rgba(29, 27, 24, .028); border-color: rgba(29, 27, 24, .22); }
+  .node img.thumb { background: rgba(29, 27, 24, .06); }
+  .node .body.md code { background: rgba(29, 27, 24, .07); color: var(--text); }
+  .node .body.md pre { background: rgba(29, 27, 24, .05); }
+  .node .body.md strong { color: var(--text); }
+
+  /* Gold wire on cream is barely there; ink reads at any zoom. */
+  .wire { stroke: rgba(29, 27, 24, .45); }
+  .wire.sel { stroke: var(--gold); }
+  .wire-label { fill: var(--muted); stroke: var(--bg); }
+  .marker { fill: rgba(29, 27, 24, .5); }
+  .marquee { border-color: rgba(29, 27, 24, .45); background: rgba(29, 27, 24, .06); }
+
+  /* Floating chrome: the selection bar, the picker and its rows. */
+  #selBar { background: rgba(252, 249, 243, .98); box-shadow: 0 8px 24px rgba(35, 36, 39, .16); }
+  #selBar button:hover { background: rgba(29, 27, 24, .07); }
+  #selBar .swatch, .menu .swatch { border-color: rgba(29, 27, 24, .22); }
+
+  #picker { background: rgba(29, 27, 24, .28); }
+  .sheet button.pick:hover { background: rgba(29, 27, 24, .05); }
+  .sheet .nameField { background: rgba(29, 27, 24, .035); }
+  /* The sticky vault heading has to match the sheet it sits on, or it reads as
+     a dark bar with invisible text. */
+  .sheet .vault { background: rgba(252, 249, 243, .98); }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar atlas-toolbar">
+    <div class="atlas-toolbar__id">
+      <span class="name" id="docName">No canvas</span>
+      <span class="dirty" id="dirty" style="visibility:hidden" title="Unsaved changes">•</span>
+    </div>
+    <button class="tool atlas-btn" id="open">Open…</button>
+    <button class="tool atlas-btn" id="new">New</button>
+    <div class="spacer atlas-spacer"></div>
+    <button class="tool atlas-btn" id="addText">+ Note</button>
+    <button class="tool atlas-btn" id="addGroup">+ Group</button>
+    <button class="tool atlas-btn" id="addLink">+ Link</button>
+    <button class="tool atlas-btn" id="fit">Fit</button>
+    <span class="zoom" id="zoomLabel">100%</span>
+    <button class="tool primary atlas-btn atlas-btn--primary" id="save">Save</button>
+  </div>
+  <div id="surface">
+    <div id="world"><svg id="wires"></svg></div>
+    <div id="emptyState">
+      <div class="atlas-empty">
+        <div class="atlas-empty__mark">&#9634;</div>
+        <div class="atlas-empty__title">No canvas open</div>
+        <div class="atlas-empty__body">Open an existing .canvas file from your vaults,
+          or start a new one. Everything stays in the JSON Canvas format Obsidian reads.</div>
+      </div>
+    </div>
+    <div class="hint">double-click empty space for a note · drag to select · space-drag to pan · ⌘scroll to zoom</div>
+  </div>
+</div>
+<div id="selBar"></div>
+<div id="picker"><div class="sheet atlas-sheet" id="pickerSheet" role="dialog" aria-modal="true"></div></div>
+<div id="toast" class="atlas-toast" role="status" aria-live="polite"></div>
+
+<script>
+'use strict';
+/* Error reporting first, before anything that could throw. A page whose script
+   dies looks alive but is inert — every listener after the failure never
+   registers — so this is the difference between "nothing happens" and knowing
+   why. It cannot use send(), which is defined further down. */
+function report(text){
+  try {
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.atlas){
+      window.webkit.messageHandlers.atlas.postMessage(JSON.stringify({ action: 'jserror', text: String(text) }));
+    }
+  } catch (e) { /* nothing left to report with */ }
+}
+window.addEventListener('error', e =>
+  report((e.message || 'error') + ' @ ' + (e.filename || '?') + ':' + (e.lineno || 0)));
+window.addEventListener('unhandledrejection', e =>
+  report('promise: ' + ((e.reason && e.reason.message) || e.reason)));
+report('boot: script started');
+
+/* ---------- pure logic (tested in Tests/canvas_test.js) ---------- */
+/* Shared with the Assistant transcript; the host injects markdown.js.
+   Read lazily and with a fallback: if injection ever fails, a canvas that shows
+   plain text is a bad day, whereas a page that throws here is a dead one. */
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g, ch =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function renderMarkdown(text){
+  if (window.atlasMarkdown && window.atlasMarkdown.renderMarkdown){
+    return window.atlasMarkdown.renderMarkdown(text);
+  }
+  return '<p>' + escapeHtml(text || '').replace(/\n/g, '<br>') + '</p>';
+}
+
+/* JSON Canvas ids are 16 lowercase hex characters in Obsidian's own files.
+   Matching that keeps files indistinguishable from ones Obsidian wrote. */
+function newId(random){
+  const rand = random || Math.random;
+  let out = '';
+  while (out.length < 16) out += Math.floor(rand() * 16).toString(16);
+  return out.slice(0, 16);
+}
+
+/* Screen point to canvas point. Every drag needs this, and getting it wrong is
+   what makes a canvas feel like it is fighting you. */
+function toWorld(point, view){
+  return { x: (point.x - view.x) / view.scale, y: (point.y - view.y) / view.scale };
+}
+function toScreen(point, view){
+  return { x: point.x * view.scale + view.x, y: point.y * view.scale + view.y };
+}
+
+/* Zoom about the pointer so the thing under the cursor stays under it. */
+function zoomAt(view, screenPoint, factor, limits){
+  const min = (limits && limits.min) || 0.1, max = (limits && limits.max) || 4;
+  const scale = Math.min(max, Math.max(min, view.scale * factor));
+  const applied = scale / view.scale;
+  return {
+    scale,
+    x: screenPoint.x - (screenPoint.x - view.x) * applied,
+    y: screenPoint.y - (screenPoint.y - view.y) * applied
+  };
+}
+
+/* The transform that brings every node into view with a margin. */
+function fitView(nodes, viewport, margin){
+  margin = margin === undefined ? 60 : margin;
+  if (!nodes.length) return { x: 0, y: 0, scale: 1 };
+  const minX = Math.min(...nodes.map(n => n.x));
+  const minY = Math.min(...nodes.map(n => n.y));
+  const maxX = Math.max(...nodes.map(n => n.x + (n.width || 0)));
+  const maxY = Math.max(...nodes.map(n => n.y + (n.height || 0)));
+  const width = Math.max(1, maxX - minX), height = Math.max(1, maxY - minY);
+  const scale = Math.min(4, Math.max(0.1,
+    Math.min((viewport.width - margin * 2) / width, (viewport.height - margin * 2) / height)));
+  return {
+    scale,
+    x: (viewport.width - width * scale) / 2 - minX * scale,
+    y: (viewport.height - height * scale) / 2 - minY * scale
+  };
+}
+
+/* Where an edge leaves a node. JSON Canvas stores a side, not a point. */
+function portPoint(node, side){
+  const midX = node.x + (node.width || 0) / 2;
+  const midY = node.y + (node.height || 0) / 2;
+  switch (side){
+    case 'top': return { x: midX, y: node.y };
+    case 'bottom': return { x: midX, y: node.y + (node.height || 0) };
+    case 'left': return { x: node.x, y: midY };
+    default: return { x: node.x + (node.width || 0), y: midY };
+  }
+}
+
+/* Picks the sides two nodes should connect on when the file does not say.
+   Whichever axis they are further apart on wins, which is what a person would
+   draw by hand. */
+function inferSides(from, to){
+  const fromMid = { x: from.x + (from.width || 0) / 2, y: from.y + (from.height || 0) / 2 };
+  const toMid = { x: to.x + (to.width || 0) / 2, y: to.y + (to.height || 0) / 2 };
+  const dx = toMid.x - fromMid.x, dy = toMid.y - fromMid.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? { fromSide: 'right', toSide: 'left' } : { fromSide: 'left', toSide: 'right' };
+  }
+  return dy >= 0 ? { fromSide: 'bottom', toSide: 'top' } : { fromSide: 'top', toSide: 'bottom' };
+}
+
+/* A cubic curve that leaves and enters perpendicular to its sides, the way
+   Obsidian draws them. */
+function wirePath(start, startSide, end, endSide){
+  const distance = Math.max(40, Math.hypot(end.x - start.x, end.y - start.y) * 0.4);
+  const push = (side, amount) => {
+    switch (side){
+      case 'top': return { x: 0, y: -amount };
+      case 'bottom': return { x: 0, y: amount };
+      case 'left': return { x: -amount, y: 0 };
+      default: return { x: amount, y: 0 };
+    }
+  };
+  const c1 = push(startSide, distance), c2 = push(endSide, distance);
+  return `M ${start.x} ${start.y} C ${start.x + c1.x} ${start.y + c1.y}, ` +
+         `${end.x + c2.x} ${end.y + c2.y}, ${end.x} ${end.y}`;
+}
+
+/* Which nodes a marquee rectangle touches. Obsidian selects on intersection
+   rather than full containment, which is far less fussy to use. */
+function nodesInRect(nodes, rect){
+  const left = Math.min(rect.x1, rect.x2), right = Math.max(rect.x1, rect.x2);
+  const top = Math.min(rect.y1, rect.y2), bottom = Math.max(rect.y1, rect.y2);
+  return nodes.filter(n =>
+    n.x < right && n.x + (n.width || 0) > left &&
+    n.y < bottom && n.y + (n.height || 0) > top);
+}
+
+/* Nodes sitting inside a group, so dragging the group carries them.
+   Containment, not intersection: a card half outside is not in the group. */
+function nodesInGroup(nodes, group){
+  return nodes.filter(n =>
+    n.id !== group.id &&
+    n.x >= group.x && n.y >= group.y &&
+    n.x + (n.width || 0) <= group.x + (group.width || 0) &&
+    n.y + (n.height || 0) <= group.y + (group.height || 0));
+}
+
+/* Somewhere clear to drop a new note: to the right of everything, vertically
+   centred on the current view. */
+function placeNew(nodes, view, viewport, size){
+  const width = size.width, height = size.height;
+  if (!nodes.length) {
+    const centre = toWorld({ x: viewport.width / 2, y: viewport.height / 2 }, view);
+    return { x: Math.round(centre.x - width / 2), y: Math.round(centre.y - height / 2) };
+  }
+  const right = Math.max(...nodes.map(n => n.x + (n.width || 0)));
+  const centre = toWorld({ x: viewport.width / 2, y: viewport.height / 2 }, view);
+  return { x: Math.round(right + 60), y: Math.round(centre.y - height / 2) };
+}
+/* ---------- canvas picker ---------- */
+
+/* The vault a canvas belongs to, read off the readable path Swift already
+   sends in `where` (e.g. "~/Documents/Obsidian/MYTHOS Context/Canvases").
+   Nothing new crosses the bridge for this. */
+function canvasVault(where){
+  const parts = String(where || '').split('/').filter(Boolean);
+  const obsidian = parts.indexOf('Obsidian');
+  if (obsidian >= 0 && parts.length > obsidian + 1) return parts[obsidian + 1];
+  // Outside an Obsidian tree the deepest folder is the most useful label.
+  return parts.length ? parts[parts.length - 1] : 'Elsewhere';
+}
+
+/* A canvas nobody bothered to name. Obsidian's default is "Untitled", then
+   "Untitled 1", "Untitled 2"... */
+function isUntitledCanvas(name){
+  return /^untitled(\s*\d+)?$/i.test(String(name || '').trim());
+}
+
+/* Named canvases first, Untitled ones after, recency preserved within each.
+   Swift hands the list over already sorted by modification date, so a stable
+   partition is all that is needed and no timestamp has to cross the bridge. */
+function rankCanvases(files){
+  const list = Array.isArray(files) ? files.slice() : [];
+  return list.filter(f => !isUntitledCanvas(f && f.name))
+    .concat(list.filter(f => isUntitledCanvas(f && f.name)));
+}
+
+/* Case-insensitive match over the name and its location, so typing a vault
+   name narrows to that vault. */
+function filterCanvases(files, query){
+  const q = String(query || '').trim().toLowerCase();
+  const list = Array.isArray(files) ? files : [];
+  if (!q) return list.slice();
+  return list.filter(f => {
+    const name = String((f && f.name) || '').toLowerCase();
+    const where = String((f && f.where) || '').toLowerCase();
+    return name.indexOf(q) >= 0 || where.indexOf(q) >= 0;
+  });
+}
+
+/* Filtered, grouped by vault, then ranked inside each group.
+   Vault order comes from the incoming recency order, so the vault you touched
+   most recently stays on top; name-ranking applies within a vault rather than
+   across all of them, which would let one named file drag its whole vault up. */
+function groupCanvases(files, query){
+  const order = [];
+  const groups = new Map();
+  filterCanvases(files, query).forEach(file => {
+    const vault = canvasVault(file && file.where);
+    if (!groups.has(vault)){ groups.set(vault, []); order.push(vault); }
+    groups.get(vault).push(file);
+  });
+  return order.map(vault => ({ vault: vault, files: rankCanvases(groups.get(vault)) }));
+}
+
+/* ---------- end pure logic ---------- */
+
+const ACTIONS = ['list','load','save','create','openExternal','openFile','thumbnail','jserror'];
+function send(action, payload){
+  if (!ACTIONS.includes(action)) return;
+  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.atlas){
+    window.webkit.messageHandlers.atlas.postMessage(JSON.stringify(
+      Object.assign({ action }, payload || {})));
+  }
+}
+
+const NODE_DEFAULT = { width: 260, height: 120 };
+const GROUP_DEFAULT = { width: 420, height: 300 };
+
+let doc = { path: null, name: null, nodes: [], edges: [] };
+let view = { x: 0, y: 0, scale: 1 };
+let selection = new Set();
+let selectedEdge = null;
+let dirty = false;
+let undoStack = [], redoStack = [];
+
+const $ = id => document.getElementById(id);
+const surface = $('surface'), world = $('world'), wires = $('wires');
+
+function toast(message, bad){
+  const el = $('toast');
+  el.textContent = message;
+  el.className = 'on' + (bad ? ' bad' : '');
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.className = ''; }, 2600);
+}
+
+function viewport(){ return { width: surface.clientWidth, height: surface.clientHeight }; }
+
+/* Snapshots rather than inverse operations: a canvas document is small, and a
+   stack of whole states cannot drift out of sync with what is on screen. */
+function snapshot(){
+  undoStack.push(JSON.stringify({ nodes: doc.nodes, edges: doc.edges }));
+  if (undoStack.length > 60) undoStack.shift();
+  redoStack = [];
+}
+function undo(){
+  if (!undoStack.length) return;
+  redoStack.push(JSON.stringify({ nodes: doc.nodes, edges: doc.edges }));
+  const state = JSON.parse(undoStack.pop());
+  doc.nodes = state.nodes; doc.edges = state.edges;
+  markDirty(); draw();
+}
+function redo(){
+  if (!redoStack.length) return;
+  undoStack.push(JSON.stringify({ nodes: doc.nodes, edges: doc.edges }));
+  const state = JSON.parse(redoStack.pop());
+  doc.nodes = state.nodes; doc.edges = state.edges;
+  markDirty(); draw();
+}
+
+let saveTimer = null;
+function markDirty(){
+  dirty = true;
+  $('dirty').style.visibility = 'visible';
+  // Auto-save after a pause. The app refuses the write if the file changed on
+  // disk underneath us, so a canvas open in Obsidian cannot be clobbered.
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 1500);
+}
+
+window.atlasCanvas = {
+  loaded(json){
+    try {
+      const payload = JSON.parse(json);
+      doc = { path: payload.path, name: payload.name,
+              nodes: payload.nodes || [], edges: payload.edges || [] };
+      selection.clear(); selectedEdge = null;
+      undoStack = []; redoStack = [];
+      dirty = false;
+      $('dirty').style.visibility = 'hidden';
+      $('docName').textContent = payload.name || 'Untitled';
+      $('emptyState').style.display = 'none';
+      view = fitView(doc.nodes, viewport());
+      draw();
+    } catch (e) { console.error('loaded', e); }
+  },
+  listed(json){
+    try { showPicker(JSON.parse(json)); }
+    catch (e) { console.error('listed', e); }
+  },
+  saved(){
+    dirty = false;
+    $('dirty').style.visibility = 'hidden';
+    toast('Saved');
+  },
+  preview(json){
+    try {
+      const payload = JSON.parse(json);
+      previews[payload.file] = payload;
+      draw();
+    } catch (e) { console.error('preview', e); }
+  },
+  notify(message, bad){ toast(message, bad); }
+};
+
+/* ---------- drawing ---------- */
+function draw(){
+  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+  $('zoomLabel').textContent = Math.round(view.scale * 100) + '%';
+
+  world.querySelectorAll('.node').forEach(el => el.remove());
+  doc.nodes.forEach(node => world.appendChild(buildNode(node)));
+  drawWires();
+  renderToolbar();
+}
+
+function buildNode(node){
+  const el = document.createElement('div');
+  el.className = 'node ' + (node.type || 'text') + (selection.has(node.id) ? ' sel' : '');
+  el.dataset.id = node.id;
+  el.style.left = node.x + 'px';
+  el.style.top = node.y + 'px';
+  el.style.width = (node.width || NODE_DEFAULT.width) + 'px';
+  el.style.height = (node.height || NODE_DEFAULT.height) + 'px';
+  if (node.color){
+    // Obsidian tints the whole card, not just its edge.
+    const colour = colorOf(node.color);
+    el.style.borderColor = colour;
+    el.style.background = tint(colour);
+  }
+
+  const body = document.createElement('div');
+
+  if (node.type === 'file'){
+    body.className = 'body file';
+    const preview = previews[node.file];
+    if (preview && preview.image){
+      const img = document.createElement('img');
+      img.className = 'thumb';
+      img.src = preview.image;
+      el.appendChild(img);
+      el.classList.add('hasThumb');
+    } else if (preview && preview.text){
+      const excerpt = document.createElement('div');
+      excerpt.className = 'md excerpt';
+      excerpt.innerHTML = renderMarkdown(preview.text);
+      el.appendChild(excerpt);
+    } else {
+      askForPreview(node.file);
+    }
+    const caption = document.createElement('div');
+    caption.className = 'caption';
+    caption.textContent = (node.file || '').split('/').pop();
+    el.appendChild(caption);
+    return finishNode(el, node);
+  }
+
+  if (node.type === 'link'){
+    body.className = 'body link';
+    body.textContent = node.url || '';
+  } else if (node.type === 'group'){
+    body.className = 'body';
+    body.textContent = node.label || 'Group';
+  } else {
+    // Text nodes are markdown in the format, and were rendering as raw hashes.
+    body.className = 'body md';
+    body.innerHTML = renderMarkdown(node.text || '');
+  }
+  el.appendChild(body);
+  return finishNode(el, node);
+}
+
+function finishNode(el, node){
+  ['top','right','bottom','left'].forEach(side => {
+    const port = document.createElement('div');
+    port.className = 'port ' + side;
+    port.dataset.side = side;
+    el.appendChild(port);
+  });
+  const handle = document.createElement('div');
+  handle.className = 'handle';
+  el.appendChild(handle);
+  // Right-click rather than more toolbar buttons: these are per-node and
+  // occasional, and the canvas should stay uncluttered.
+  el.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    openNodeMenu(node, e.clientX, e.clientY);
+  });
+  return el;
+}
+
+/* Previews come from the app: the page has no file access at all, which is why
+   an image cannot simply be an <img src="file://…">. Each path is asked for once. */
+const previews = {};
+const askedFor = new Set();
+function askForPreview(file){
+  if (!file || askedFor.has(file)) return;
+  askedFor.add(file);
+  send('thumbnail', { path: doc.path, file });
+}
+
+/* A translucent wash of the node colour, so a tinted card stays readable. */
+function tint(colour){
+  if (colour.startsWith('#') && colour.length === 7){
+    const r = parseInt(colour.slice(1,3),16), g = parseInt(colour.slice(3,5),16), b = parseInt(colour.slice(5,7),16);
+    return `rgba(${r}, ${g}, ${b}, 0.14)`;
+  }
+  return 'rgba(255,255,255,.05)';
+}
+
+/* Obsidian's six canvas colours are stored as "1".."6"; anything else is a hex
+   string the file already carries. */
+const PALETTE = { '1':'#ff6b6b','2':'#ff9f0a','3':'#ffd60a','4':'#32d74b','5':'#3fd0ff','6':'#bf5af2' };
+function colorOf(value){ return PALETTE[value] || value; }
+
+function nodeById(id){ return doc.nodes.find(n => n.id === id); }
+
+function drawWires(){
+  wires.innerHTML = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="marker" d="M 0 0 L 10 5 L 0 10 z"/></marker></defs>`;
+
+  doc.edges.forEach(edge => {
+    const from = nodeById(edge.fromNode), to = nodeById(edge.toNode);
+    if (!from || !to) return;   // an edge to a deleted node draws nothing
+    const sides = (edge.fromSide && edge.toSide)
+      ? { fromSide: edge.fromSide, toSide: edge.toSide }
+      : inferSides(from, to);
+    const start = portPoint(from, sides.fromSide), end = portPoint(to, sides.toSide);
+    const d = wirePath(start, sides.fromSide, end, sides.toSide);
+
+    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    hit.setAttribute('d', d);
+    hit.setAttribute('class', 'wire-hit');
+    hit.addEventListener('click', e => {
+      e.stopPropagation();
+      selectedEdge = edge.id; selection.clear(); draw();
+    });
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('class', 'wire' + (selectedEdge === edge.id ? ' sel' : ''));
+    path.setAttribute('marker-end', 'url(#arrow)');
+    if (edge.color) path.style.stroke = colorOf(edge.color);
+
+    wires.appendChild(path);
+    wires.appendChild(hit);
+
+    if (edge.label){
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('class', 'wire-label');
+      text.setAttribute('x', (start.x + end.x) / 2);
+      text.setAttribute('y', (start.y + end.y) / 2 - 6);
+      text.setAttribute('text-anchor', 'middle');
+      text.textContent = edge.label;
+      wires.appendChild(text);
+    }
+  });
+}
+
+/* ---------- interaction ---------- */
+let drag = null;
+
+surface.addEventListener('pointerdown', e => {
+  const nodeEl = e.target.closest('.node');
+  const port = e.target.classList.contains('port') ? e.target : null;
+  const handle = e.target.classList.contains('handle') ? e.target : null;
+
+  if (port && nodeEl){
+    drag = { mode: 'connect', from: nodeEl.dataset.id, fromSide: port.dataset.side,
+             ghost: null, start: { x: e.clientX, y: e.clientY } };
+    e.preventDefault();
+    return;
+  }
+  if (handle && nodeEl){
+    const node = nodeById(nodeEl.dataset.id);
+    snapshot();
+    drag = { mode: 'resize', id: node.id, start: { x: e.clientX, y: e.clientY },
+             width: node.width || NODE_DEFAULT.width, height: node.height || NODE_DEFAULT.height };
+    e.preventDefault();
+    return;
+  }
+  if (nodeEl){
+    const id = nodeEl.dataset.id;
+    if (!selection.has(id)){
+      if (!e.shiftKey) selection.clear();
+      selection.add(id);
+    } else if (e.shiftKey) {
+      selection.delete(id);
+    }
+    selectedEdge = null;
+    snapshot();
+
+    // Dragging a group takes what is inside it, the way Obsidian does.
+    const moving = new Set(selection);
+    selection.forEach(selectedId => {
+      const node = nodeById(selectedId);
+      if (node && node.type === 'group'){
+        nodesInGroup(doc.nodes, node).forEach(child => moving.add(child.id));
+      }
+    });
+
+    drag = {
+      mode: 'move', start: { x: e.clientX, y: e.clientY },
+      origin: [...moving].map(nodeId => {
+        const node = nodeById(nodeId);
+        return { id: nodeId, x: node.x, y: node.y };
+      })
+    };
+    draw();
+    e.preventDefault();
+    return;
+  }
+
+  // Empty space. Space or middle button pans; a plain drag draws a marquee,
+  // which is what people reach for far more often.
+  if (spaceHeld || e.button === 1){
+    drag = { mode: 'pan', start: { x: e.clientX, y: e.clientY }, origin: { x: view.x, y: view.y } };
+    surface.classList.add('panning');
+    return;
+  }
+  if (!e.shiftKey) selection.clear();
+  selectedEdge = null; draw();
+  const rect = surface.getBoundingClientRect();
+  drag = { mode: 'marquee', start: { x: e.clientX, y: e.clientY },
+           origin: toWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top }, view),
+           base: new Set(selection) };
+});
+
+surface.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.start.x, dy = e.clientY - drag.start.y;
+
+  if (drag.mode === 'pan'){
+    view.x = drag.origin.x + dx;
+    view.y = drag.origin.y + dy;
+    world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+    hideToolbar();
+    return;
+  }
+  if (drag.mode === 'move'){
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) drag.moved = true;
+    drag.origin.forEach(item => {
+      const node = nodeById(item.id);
+      node.x = Math.round(item.x + dx / view.scale);
+      node.y = Math.round(item.y + dy / view.scale);
+      const el = world.querySelector(`.node[data-id="${item.id}"]`);
+      if (el){ el.style.left = node.x + 'px'; el.style.top = node.y + 'px'; }
+    });
+    drawWires();
+    return;
+  }
+  if (drag.mode === 'resize'){
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) drag.moved = true;
+    const node = nodeById(drag.id);
+    node.width = Math.max(80, Math.round(drag.width + dx / view.scale));
+    node.height = Math.max(60, Math.round(drag.height + dy / view.scale));
+    const el = world.querySelector(`.node[data-id="${drag.id}"]`);
+    if (el){ el.style.width = node.width + 'px'; el.style.height = node.height + 'px'; }
+    drawWires();
+    return;
+  }
+  if (drag.mode === 'marquee'){
+    const rect = surface.getBoundingClientRect();
+    const now = toWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top }, view);
+    const box = { x1: drag.origin.x, y1: drag.origin.y, x2: now.x, y2: now.y };
+    if (!drag.box){
+      drag.box = document.createElement('div');
+      drag.box.className = 'marquee';
+      world.appendChild(drag.box);
+    }
+    drag.box.style.left = Math.min(box.x1, box.x2) + 'px';
+    drag.box.style.top = Math.min(box.y1, box.y2) + 'px';
+    drag.box.style.width = Math.abs(box.x2 - box.x1) + 'px';
+    drag.box.style.height = Math.abs(box.y2 - box.y1) + 'px';
+
+    selection = new Set(drag.base);
+    nodesInRect(doc.nodes, box).forEach(n => selection.add(n.id));
+    world.querySelectorAll('.node').forEach(el =>
+      el.classList.toggle('sel', selection.has(el.dataset.id)));
+    return;
+  }
+  if (drag.mode === 'connect'){
+    const from = nodeById(drag.from);
+    const start = portPoint(from, drag.fromSide);
+    const point = toWorld({ x: e.clientX - surface.getBoundingClientRect().left,
+                            y: e.clientY - surface.getBoundingClientRect().top }, view);
+    if (!drag.ghost){
+      drag.ghost = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      drag.ghost.setAttribute('class', 'wire');
+      drag.ghost.style.strokeDasharray = '5 4';
+      wires.appendChild(drag.ghost);
+    }
+    drag.ghost.setAttribute('d', wirePath(start, drag.fromSide, point, 'left'));
+  }
+});
+
+surface.addEventListener('pointerup', e => {
+  if (!drag) return;
+  surface.classList.remove('panning');
+
+  if (drag.mode === 'marquee'){
+    if (drag.box) drag.box.remove();
+    drag = null;
+    return;
+  }
+  if (drag.mode === 'connect'){
+    if (drag.ghost) drag.ghost.remove();
+    const target = e.target.closest('.node');
+    if (target && target.dataset.id !== drag.from){
+      const port = e.target.classList.contains('port') ? e.target.dataset.side : null;
+      snapshot();
+      doc.edges.push({
+        id: newId(), fromNode: drag.from, fromSide: drag.fromSide,
+        toNode: target.dataset.id,
+        toSide: port || inferSides(nodeById(drag.from), nodeById(target.dataset.id)).toSide
+      });
+      markDirty(); draw();
+    }
+    renderToolbar();
+  } else if (drag.mode === 'move' || drag.mode === 'resize'){
+    // Only if something actually changed. Selecting a node used to mark the
+    // file dirty, which invites saving over a canvas you never edited — worse
+    // when Obsidian has the same file open.
+    if (drag.moved) markDirty(); else undoStack.pop();
+  }
+  drag = null;
+  renderToolbar();
+});
+
+/* Trackpad pinch arrives as a wheel event with ctrlKey; ⌘scroll is the mouse
+   equivalent. Everything else scrolls the canvas. */
+surface.addEventListener('wheel', e => {
+  const rect = surface.getBoundingClientRect();
+  const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  if (e.ctrlKey || e.metaKey){
+    e.preventDefault();
+    view = zoomAt(view, point, Math.exp(-e.deltaY * 0.01));
+  } else {
+    view.x -= e.deltaX;
+    view.y -= e.deltaY;
+  }
+  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+  $('zoomLabel').textContent = Math.round(view.scale * 100) + '%';
+  renderToolbar();
+}, { passive: false });
+
+/* Double-click: on a node, edit or open it; on empty space, make a note right
+   there. That second one is how Obsidian works and was the biggest thing
+   missing — the toolbar button put notes off to the side instead. */
+surface.addEventListener('dblclick', e => {
+  const nodeEl = e.target.closest('.node');
+  if (!nodeEl){
+    const rect = surface.getBoundingClientRect();
+    const at = toWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top }, view);
+    addNode('text', null, { x: Math.round(at.x - NODE_DEFAULT.width / 2),
+                            y: Math.round(at.y - NODE_DEFAULT.height / 2) });
+    return;
+  }
+  const node = nodeById(nodeEl.dataset.id);
+  if (!node) return;
+
+  // A file node has nothing to type into — opening the file is what
+  // double-clicking one is for, the same as Obsidian.
+  if (node.type === 'file'){ send('openFile', { path: doc.path, file: node.file }); return; }
+  if (node.type === 'link'){ send('openExternal', { url: node.url }); return; }
+  beginEditing(node);
+});
+
+/* Puts a text box over the node's body and commits on blur. */
+function beginEditing(node){
+  const nodeEl = world.querySelector('.node[data-id="' + node.id + '"]');
+  if (!nodeEl || (node.type !== 'text' && node.type !== 'group')) return;
+  const body = nodeEl.querySelector('.body');
+  if (!body) return;
+
+  const editor = document.createElement('textarea');
+  editor.value = node.type === 'group' ? (node.label || '') : (node.text || '');
+  body.replaceWith(editor);
+  editor.focus();
+  editor.select();
+  hideToolbar();
+
+  let committed = false;
+  const commit = () => {
+    if (committed) return;
+    committed = true;
+    const value = editor.value;
+    const before = node.type === 'group' ? node.label : node.text;
+    if (value !== before){
+      snapshot();
+      if (node.type === 'group') node.label = value; else node.text = value;
+      markDirty();
+    }
+    draw();
+  };
+  editor.addEventListener('blur', commit);
+  editor.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape'){ ev.stopPropagation(); editor.blur(); }
+    ev.stopPropagation();   // keep canvas shortcuts out of the text box
+  });
+}
+
+let spaceHeld = false;
+document.addEventListener('keyup', e => { if (e.code === 'Space') spaceHeld = false; });
+
+document.addEventListener('keydown', e => {
+  const typing = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
+  if (typing) return;
+
+  if (e.code === 'Space'){ spaceHeld = true; e.preventDefault(); return; }
+
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a'){
+    e.preventDefault();
+    selection = new Set(doc.nodes.map(n => n.id));
+    draw();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd'){
+    e.preventDefault();
+    if (!selection.size) return;
+    snapshot();
+    const copies = [...selection].map(id => {
+      const original = nodeById(id);
+      return Object.assign({}, original, { id: newId(), x: original.x + 28, y: original.y + 28 });
+    });
+    doc.nodes.push(...copies);
+    selection = new Set(copies.map(n => n.id));
+    markDirty(); draw();
+    return;
+  }
+  // Arrow keys nudge; shift makes it a bigger step.
+  if (e.key.startsWith('Arrow') && selection.size){
+    e.preventDefault();
+    const step = e.shiftKey ? 40 : 8;
+    const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+    const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+    snapshot();
+    selection.forEach(id => {
+      const node = nodeById(id);
+      node.x += dx; node.y += dy;
+    });
+    markDirty(); draw();
+    return;
+  }
+
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z'){
+    e.preventDefault();
+    e.shiftKey ? redo() : undo();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's'){ e.preventDefault(); save(); return; }
+  if (e.key === 'Enter' && selection.size === 1){
+    e.preventDefault();
+    const node = nodeById([...selection][0]);
+    if (node) beginEditing(node);
+    return;
+  }
+  if (e.key === 'Backspace' || e.key === 'Delete'){
+    if (!selection.size && !selectedEdge) return;
+    e.preventDefault();
+    snapshot();
+    if (selectedEdge){
+      doc.edges = doc.edges.filter(edge => edge.id !== selectedEdge);
+      selectedEdge = null;
+    }
+    if (selection.size){
+      doc.nodes = doc.nodes.filter(node => !selection.has(node.id));
+      // An edge to a node that no longer exists is not a canvas, it is a leak.
+      doc.edges = doc.edges.filter(edge => !selection.has(edge.fromNode) && !selection.has(edge.toNode));
+      selection.clear();
+    }
+    markDirty(); draw();
+  }
+});
+
+/* ---------- toolbar ---------- */
+/* The toolbar that appears above a selection.
+   Right-click menus are invisible until you know they exist; this is the thing
+   that makes colour, duplicate and delete discoverable at all. */
+function hideToolbar(){ $('selBar').classList.remove('on'); }
+
+function renderToolbar(){
+  const bar = $('selBar');
+  if (!selection.size || drag){ hideToolbar(); return; }
+
+  const chosen = doc.nodes.filter(n => selection.has(n.id));
+  if (!chosen.length){ hideToolbar(); return; }
+
+  const left = Math.min(...chosen.map(n => n.x));
+  const right = Math.max(...chosen.map(n => n.x + (n.width || 0)));
+  const top = Math.min(...chosen.map(n => n.y));
+  const surfaceBox = surface.getBoundingClientRect();
+  const middle = toScreen({ x: (left + right) / 2, y: top }, view);
+
+  bar.innerHTML = '';
+  const first = chosen[0];
+
+  const button = (label, title, fn, danger) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.title = title;
+    if (danger) b.className = 'danger';
+    b.addEventListener('mousedown', e => e.stopPropagation());
+    b.addEventListener('click', e => { e.stopPropagation(); fn(); });
+    bar.appendChild(b);
+  };
+
+  if (chosen.length === 1 && first.type === 'file'){
+    button('Open', 'Open this file', () => send('openFile', { path: doc.path, file: first.file }));
+  } else if (chosen.length === 1 && first.type === 'link'){
+    button('Open', 'Open this link', () => send('openExternal', { url: first.url }));
+  } else if (chosen.length === 1){
+    button('Edit', 'Edit the text', () => beginEditing(first));
+  }
+
+  Object.keys(COLOUR_NAMES).forEach(key => {
+    const dot = document.createElement('button');
+    dot.className = 'swatch';
+    dot.style.background = PALETTE[key];
+    dot.title = COLOUR_NAMES[key];
+    dot.addEventListener('mousedown', e => e.stopPropagation());
+    dot.addEventListener('click', e => {
+      e.stopPropagation();
+      snapshot();
+      chosen.forEach(n => { n.color = key; });
+      markDirty(); draw();
+    });
+    bar.appendChild(dot);
+  });
+  const clear = document.createElement('button');
+  clear.className = 'swatch none';
+  clear.title = 'No colour';
+  clear.addEventListener('mousedown', e => e.stopPropagation());
+  clear.addEventListener('click', e => {
+    e.stopPropagation();
+    snapshot();
+    chosen.forEach(n => { delete n.color; });
+    markDirty(); draw();
+  });
+  bar.appendChild(clear);
+
+  button('Duplicate', 'Duplicate (⌘D)', () => {
+    snapshot();
+    const copies = chosen.map(n => Object.assign({}, n, { id: newId(), x: n.x + 28, y: n.y + 28 }));
+    doc.nodes.push(...copies);
+    selection = new Set(copies.map(n => n.id));
+    markDirty(); draw();
+  });
+  button('Delete', 'Delete (⌫)', () => {
+    snapshot();
+    const ids = new Set(chosen.map(n => n.id));
+    doc.nodes = doc.nodes.filter(n => !ids.has(n.id));
+    doc.edges = doc.edges.filter(e => !ids.has(e.fromNode) && !ids.has(e.toNode));
+    selection.clear();
+    markDirty(); draw();
+  }, true);
+
+  bar.classList.add('on');
+  // Positioned after showing so the width is real.
+  const width = bar.offsetWidth;
+  bar.style.left = Math.round(surfaceBox.left + middle.x - width / 2) + 'px';
+  bar.style.top = Math.round(surfaceBox.top + middle.y - bar.offsetHeight - 12) + 'px';
+}
+
+/* Obsidian's palette, plus clearing it. */
+const COLOUR_NAMES = { '1':'Red', '2':'Orange', '3':'Yellow', '4':'Green', '5':'Blue', '6':'Purple' };
+
+/* Menu actions apply to the whole selection when the clicked node is part of it,
+   and to just that node otherwise, which is what every editor does. */
+function targets(node){
+  return selection.has(node.id) ? doc.nodes.filter(n => selection.has(n.id)) : [node];
+}
+
+function openNodeMenu(node, x, y){
+  document.querySelectorAll('.menu').forEach(m => m.remove());
+  const menu = document.createElement('div');
+  menu.className = 'menu atlas-menu';
+  menu.style.left = Math.min(x, window.innerWidth - 210) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - 240) + 'px';
+
+  const item = (label, fn, danger) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (danger) b.className = 'danger';
+    b.addEventListener('click', () => { menu.remove(); fn(); });
+    menu.appendChild(b);
+  };
+
+  if (node.type === 'file'){
+    item('Open file', () => send('openFile', { path: doc.path, file: node.file }));
+  } else if (node.type === 'link'){
+    item('Open link', () => send('openExternal', { url: node.url }));
+  } else {
+    item('Edit text', () => {
+      const el = world.querySelector('.node[data-id="' + node.id + '"]');
+      if (el) el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+  }
+
+  const swatches = document.createElement('div');
+  swatches.className = 'swatches';
+  Object.keys(COLOUR_NAMES).forEach(key => {
+    const dot = document.createElement('button');
+    dot.className = 'swatch';
+    dot.style.background = PALETTE[key];
+    dot.title = COLOUR_NAMES[key];
+    dot.addEventListener('click', () => {
+      menu.remove(); snapshot();
+      targets(node).forEach(n => { n.color = key; });
+      markDirty(); draw();
+    });
+    swatches.appendChild(dot);
+  });
+  const clear = document.createElement('button');
+  clear.className = 'swatch none';
+  clear.title = 'No colour';
+  clear.addEventListener('click', () => {
+    menu.remove(); snapshot();
+    targets(node).forEach(n => { delete n.color; });
+    markDirty(); draw();
+  });
+  swatches.appendChild(clear);
+  menu.appendChild(swatches);
+
+  item('Duplicate', () => {
+    snapshot();
+    const copies = targets(node).map(n => Object.assign({}, n, { id: newId(), x: n.x + 28, y: n.y + 28 }));
+    doc.nodes.push(...copies);
+    selection = new Set(copies.map(n => n.id));
+    markDirty(); draw();
+  });
+  item('Delete', () => {
+    snapshot();
+    const ids = new Set(targets(node).map(n => n.id));
+    doc.nodes = doc.nodes.filter(n => !ids.has(n.id));
+    doc.edges = doc.edges.filter(e => !ids.has(e.fromNode) && !ids.has(e.toNode));
+    selection.clear(); markDirty(); draw();
+  }, true);
+
+  document.body.appendChild(menu);
+  const dismiss = () => { menu.remove(); document.removeEventListener('mousedown', dismiss); };
+  setTimeout(() => document.addEventListener('mousedown', dismiss), 0);
+}
+
+function addNode(type, extra, position){
+  if (!doc.path){ toast('Open or create a canvas first', true); return; }
+  const size = type === 'group' ? GROUP_DEFAULT : NODE_DEFAULT;
+  const at = position || placeNew(doc.nodes, view, viewport(), size);
+  const node = Object.assign(
+    { id: newId(), type, x: at.x, y: at.y, width: size.width, height: size.height },
+    extra || {});
+  if (type === 'group') node.label = 'Group';
+  else if (type === 'text') node.text = '';
+  snapshot();
+  doc.nodes.push(node);
+  selection.clear(); selection.add(node.id);
+  markDirty(); draw();
+  // Straight into typing: making a note and then having to double-click it is
+  // a step nobody wants.
+  if (type === 'text' || type === 'group') beginEditing(node);
+}
+
+function save(){
+  if (!doc.path) return;
+  send('save', { path: doc.path, nodes: doc.nodes, edges: doc.edges });
+}
+
+/* Every picker sheet opens with the same heading treatment. */
+function pickerHeading(text){
+  const heading = document.createElement('h3');
+  heading.className = 'atlas-sheet__title';
+  heading.textContent = text;
+  return heading;
+}
+
+function showPicker(files){
+  const sheet = $('pickerSheet');
+  sheet.innerHTML = '';
+  sheet.appendChild(pickerHeading('Open a canvas'));
+
+  if (!files.length){
+    const empty = document.createElement('div');
+    empty.className = 'atlas-empty atlas-empty--inline';
+    empty.innerHTML =
+      '<div class="atlas-empty__title">No canvases yet</div>' +
+      '<div class="atlas-empty__body">ATLAS looks for .canvas files across your ' +
+        'vaults. Use New to make the first one.</div>';
+    sheet.appendChild(empty);
+    $('picker').classList.add('on');
+    return;
+  }
+
+  const search = document.createElement('input');
+  search.className = 'nameField';
+  search.placeholder = 'Filter by name or vault';
+  search.setAttribute('aria-label', 'Filter canvases');
+  search.spellcheck = false;
+  sheet.appendChild(search);
+
+  const results = document.createElement('div');
+  results.className = 'results';
+  sheet.appendChild(results);
+
+  function paint(){
+    results.innerHTML = '';
+    const groups = groupCanvases(files, search.value);
+    if (!groups.length){
+      const none = document.createElement('div');
+      none.className = 'none';
+      none.textContent = 'Nothing matches that.';
+      results.appendChild(none);
+      return;
+    }
+    groups.forEach(group => {
+      // One vault is not worth a heading - it is just the list.
+      if (groups.length > 1){
+        const label = document.createElement('div');
+        label.className = 'vault';
+        label.textContent = group.vault;
+        results.appendChild(label);
+      }
+      group.files.forEach(file => {
+        const button = document.createElement('button');
+        button.className = 'pick' + (isUntitledCanvas(file.name) ? ' untitled' : '');
+        const name = document.createElement('div');
+        name.className = 'nm';
+        name.textContent = file.name;
+        const where = document.createElement('div');
+        where.className = 'where';
+        where.textContent = file.where;
+        button.appendChild(name); button.appendChild(where);
+        button.addEventListener('click', () => {
+          $('picker').classList.remove('on');
+          send('load', { path: file.path });
+        });
+        results.appendChild(button);
+      });
+    });
+  }
+
+  search.addEventListener('input', paint);
+  search.addEventListener('keydown', e => {
+    if (e.key === 'Escape') $('picker').classList.remove('on');
+    // Enter opens the first result, so filter-then-Enter is the fast path.
+    if (e.key === 'Enter'){
+      const first = results.querySelector('button.pick');
+      if (first) first.click();
+    }
+  });
+
+  paint();
+  $('picker').classList.add('on');
+  setTimeout(() => search.focus(), 40);
+}
+
+$('open').addEventListener('click', () => send('list'));
+/* Not window.prompt: a WKWebView with no dialog delegate silently returns null,
+   so the button would appear to do nothing. */
+$('new').addEventListener('click', () => {
+  const sheet = $('pickerSheet');
+  sheet.innerHTML = '';
+  sheet.appendChild(pickerHeading('New canvas'));
+  const field = document.createElement('input');
+  field.className = 'nameField';
+  field.placeholder = 'Name it';
+  field.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && field.value.trim()){
+      $('picker').classList.remove('on');
+      send('create', { name: field.value.trim() });
+    }
+    if (e.key === 'Escape') $('picker').classList.remove('on');
+  });
+  sheet.appendChild(field);
+  $('picker').classList.add('on');
+  setTimeout(() => field.focus(), 40);
+});
+$('addText').addEventListener('click', () => addNode('text'));
+$('addGroup').addEventListener('click', () => addNode('group'));
+$('addLink').addEventListener('click', () => {
+  const sheet = $('pickerSheet');
+  sheet.innerHTML = '';
+  sheet.appendChild(pickerHeading('New link'));
+  const field = document.createElement('input');
+  field.className = 'nameField';
+  field.placeholder = 'https://…';
+  field.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && field.value.trim()){
+      $('picker').classList.remove('on');
+      addNode('link', { url: field.value.trim() });
+    }
+    if (e.key === 'Escape') $('picker').classList.remove('on');
+  });
+  sheet.appendChild(field);
+  $('picker').classList.add('on');
+  setTimeout(() => field.focus(), 40);
+});
+$('fit').addEventListener('click', () => { view = fitView(doc.nodes, viewport()); draw(); });
+$('save').addEventListener('click', save);
+$('picker').addEventListener('click', e => {
+  if (e.target === $('picker')) $('picker').classList.remove('on');
+});
+
+report('boot: listeners wired · markdown ' + (window.atlasMarkdown ? 'injected' : 'MISSING'));
+send('list');
+</script>
+</body>
+</html>

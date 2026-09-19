@@ -1,0 +1,1583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Assistant transcript renderer.
+
+  This page displays text written by a language model, including uncensored
+  ones. That text is untrusted input, so two things hold the line:
+
+    1. Every model byte goes through escapeHtml before it can reach innerHTML.
+       The renderer itself is markdown.js, shared with the canvas page; tests
+       live in Tests/chat_render_test.js — run them after any edit to either.
+    2. The CSP below denies every network destination. Even if an escape were
+       missed, the injected code has nowhere to send anything.
+
+  The renderer (markdown.js, shared with the canvas) is injected by the host as
+  a user script, not fetched — so this page loads no files at all. The host must
+  NOT enable allowFileAccessFromFileURLs, allowUniversalAccessFromFileURLs, or
+  register a script message handler.
+  HUDView does enable those; it renders only ATLAS's own animation. Copying
+  that configuration here would let model output read local files and call
+  into native code. See AssistantChatWebView.swift.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATLAS Assistant</title>
+<style>
+/* Shared tokens, reset and components arrive from atlas-theme.css /
+   atlas-components.css, injected ahead of this block. */
+:root{
+  --edge-soft: rgba(255, 255, 255, 0.075);
+}
+html,body{overflow:hidden}
+body{
+  background:
+    radial-gradient(120vh 90vh at 8% -18%, rgba(200,225,255,.055), transparent 62%),
+    var(--bg);
+  background-attachment:fixed;
+  font-size:14px;line-height:1.6}
+/* One reading column. `align-items` is what lets each message choose its own
+   width and side — the model's reply stretches, your capsule hugs right. */
+/* Full width, with the reading column made out of padding rather than
+   max-width. When #log was both the scroller and the 80ch column, its
+   scrollbar rode the column's right edge and floated mid-pane; the scroller
+   has to span the pane for the bar to sit on the real border. */
+#log{padding:30px max(26px, calc((100% - 80ch) / 2)) 40px;
+  display:flex;flex-direction:column;
+  align-items:stretch;gap:26px;
+  /* This is the scroll container. `min-height:0` is load-bearing: without it a
+     flex child refuses to shrink below its content and the overflow never
+     engages, which is exactly how this page ended up unscrollable. */
+  flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+
+/* Message panel — same construction as hud.html .panel */
+/* Two speakers, two shapes.
+   Your message is short, so it takes a capsule and sits right. The model's
+   reply is long-form prose, so it gets no container at all — just the stripe
+   and a measure. The shape says who spoke, which is why neither needs a
+   name label shouting above it. */
+.msg{position:relative;display:flex;border:0;background:none;border-radius:0}
+
+.msg.user{
+  align-self:flex-end;
+  max-width:min(46ch,80%);
+  margin-left:auto;
+  /* A column, so the capsule sits above the button without either needing a
+     flex-basis. `flex-basis:100%` was making the capsule claim the whole 46ch
+     whatever the text length, which is where the empty run after short
+     messages came from. */
+  flex-direction:column;
+  align-items:flex-end;
+}
+.msg.user .inner{
+  /* The bottom-right is the send corner — squared off so the capsule reads as
+     pointing back at you rather than as a generic rounded box. */
+  border-radius:14px 14px 2px 14px;
+  background:rgba(255,255,255,.055);
+  border:1px solid rgba(255,255,255,.085);
+  box-shadow:0 1px 0 rgba(255,255,255,.05) inset;
+}
+.msg.user .msgCopy{margin-top:8px}
+.msg.assistant{align-self:stretch;max-width:100%}
+/* Clipped corner brackets — the detail that makes a box read as a HUD. */
+/* Corner brackets removed: the stripe already reports the live state. */
+/* Page-local: the accent stripe down a message, not a toolbar. The shared
+   toolbar is .atlas-toolbar, so the two never collide. */
+/* The stripe belongs to the model's reply, where it marks the reading column.
+   Inside your own capsule it was a line with nothing to mark. */
+.bar{width:2px;flex:none;border-radius:2px;
+  background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,.04))}
+.msg.user .bar{display:none}
+.msg.live .bar{background:rgba(255,255,255,.85);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.msg.live .bar{animation:none;opacity:.8}}
+.inner{flex:1;min-width:0;padding:0 0 0 20px;display:flex;flex-direction:column;
+  align-items:flex-start}
+.msg.user .inner{align-items:flex-end}
+.msg.user .inner{padding:12px 16px;align-items:flex-end}
+
+/* Caption row — hud.html .cap */
+.meta{align-self:stretch;display:flex;gap:9px;align-items:baseline;margin-bottom:10px;
+  font-size:11.5px;font-weight:560;letter-spacing:0;
+  text-transform:none;color:rgba(255,255,255,.5)}
+.msg.user .meta{display:none}
+.meta .sub{color:var(--faint);letter-spacing:var(--ls-micro);font-weight:400}
+.plain{white-space:pre-wrap;word-wrap:break-word;font-size:13.5px;line-height:1.6;
+  color:rgba(255,255,255,.9);align-self:stretch}
+.md{word-wrap:break-word;font-size:14px;line-height:1.7;color:rgba(255,255,255,.88);
+  align-self:stretch;width:100%}
+.md>:first-child{margin-top:0}
+.md>:last-child{margin-bottom:0}
+.md h1,.md h2,.md h3,.md h4,.md h5,.md h6{font-weight:600;line-height:1.25;
+  color:rgba(255,255,255,.94);margin:1.35em 0 .5em;letter-spacing:var(--ls-tight)}
+.md h1{font-size:1.42rem;border-bottom:1px solid var(--edge-soft);padding-bottom:.32em}
+.md h2{font-size:1.24rem}
+.md h3{font-size:1.09rem;color:var(--gold-dim)}
+.md h4{font-size:1rem;color:var(--gold-dim)}
+.md h5{font-size:.94rem;color:var(--gold-dim)}
+.md h6{font-size:var(--fs-label);font-weight:700;letter-spacing:var(--ls-caps);
+  color:var(--gold-dim);text-transform:uppercase}
+.md p{margin:.7em 0}
+.md strong{color:rgba(255,255,255,.98);font-weight:640}
+.md em{color:rgba(255,255,255,.82)}
+.md a{color:rgba(255,255,255,.92);text-underline-offset:3px;
+  text-decoration-color:rgba(255,255,255,.35)}
+.md a:hover{color:#fff}
+.md ul,.md ol{margin:.65em 0;padding-left:1.4em}
+.md li{margin:.26em 0}
+.md li::marker{color:var(--gold-dim)}
+.md ul ul,.md ol ol,.md ul ol,.md ol ul{margin:.2em 0}
+.md ul ul li::marker{color:var(--faint)}
+.md blockquote{margin:.9em 0;padding:.15em 0 .15em 1em;border-left:1px solid var(--edge);
+  color:rgba(255,255,255,.7)}
+.md blockquote p{margin:.3em 0}
+.md code{font-family:var(--mono);font-size:12px;color:var(--gold);
+  background:rgba(212,176,89,.08);border:1px solid var(--edge-soft);border-radius:2px;
+  padding:.1em .34em}
+.md pre{position:relative;margin:.95em 0;padding:14px 16px;overflow:auto;
+  background:rgba(0,0,0,.42);border:1px solid var(--edge-soft);border-radius:var(--r-sm)}
+.md pre code{display:block;padding:0;border:0;background:transparent;color:var(--text);
+  white-space:pre;font-size:var(--fs-meta);line-height:1.65}
+.md .code-label{display:block;margin:-2px 0 8px;color:var(--gold-dim);font-family:var(--mono);
+  font-size:var(--fs-micro);font-weight:700;text-transform:uppercase;
+  letter-spacing:var(--ls-caps)}
+.md hr{border:0;border-top:1px solid var(--edge-soft);margin:1.3em 0}
+.md .table-wrap{overflow-x:auto;margin:.95em 0;border:1px solid var(--edge-soft);
+  border-radius:var(--r-sm)}
+.md table{border-collapse:collapse;width:100%;font-size:var(--fs-body)}
+.md th,.md td{padding:8px 13px;text-align:left;border-bottom:1px solid rgba(255,255,255,.05);
+  vertical-align:top}
+.md td{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--fs-meta)}
+.md th{background:rgba(212,176,89,.06);color:var(--gold-dim);font-weight:700;
+  font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:var(--ls-caps);
+  white-space:nowrap}
+.md tbody tr:last-child td{border-bottom:0}
+.md tbody tr:hover{background:rgba(255,255,255,.02)}
+.copy{position:absolute;top:7px;right:7px;color:var(--muted);background:rgba(0,0,0,.5);
+  border:1px solid var(--edge-soft);border-radius:var(--r-sm);cursor:pointer;
+  opacity:0;transition:opacity var(--dur-fast),color var(--dur-fast)}
+.md pre:hover .copy,.copy:focus,.copy:focus-visible{opacity:1}
+.copy:hover{color:var(--gold);border-color:var(--edge)}
+/* What the model thought on the way to the answer, so it sits behind the
+   answer rather than beside it. */
+.think{align-self:stretch;margin:0 0 16px;border:1px solid rgba(255,255,255,.06);
+  background:rgba(0,0,0,.3);border-radius:8px}
+.think summary{cursor:pointer;padding:9px 13px;font-size:11px;font-weight:560;
+  letter-spacing:0;text-transform:none;color:rgba(255,255,255,.36);list-style:none}
+.think summary::-webkit-details-marker{display:none}
+.think summary::before{content:"\25B8  "}
+.think[open] summary::before{content:"\25BE  "}
+.think summary:hover{color:rgba(255,255,255,.7)}
+.think summary{display:flex;align-items:center;gap:8px}
+.think summary .sp{flex:1}
+.thinkCopy{color:var(--muted);background:var(--panel);border:1px solid var(--edge-soft);
+  border-radius:var(--r-sm);cursor:pointer;opacity:0;
+  transition:opacity var(--dur-fast),color var(--dur-fast)}
+.thinkCopy:hover{color:rgba(255,255,255,.85);border-color:rgba(255,255,255,.3)}
+.think:hover .thinkCopy,.thinkCopy:focus,.thinkCopy:focus-visible{opacity:1}
+
+/* Icon-only, so all three copy controls are one square target. 26px was inside
+   the letter of the guidance and still fiddly in practice, and a 13px glyph is
+   hard to aim at even when the box around it is fine. */
+.copy,.msgCopy,.thinkCopy{display:grid;place-items:center;width:32px;height:32px;padding:0;flex:none}
+.copy svg,.msgCopy svg,.thinkCopy svg{width:15px;height:15px;display:block}
+.copy.ok,.msgCopy.ok,.thinkCopy.ok{color:var(--ok);border-color:rgba(52,199,89,.45)}
+.copy.bad,.msgCopy.bad,.thinkCopy.bad{color:var(--err);border-color:rgba(255,59,48,.45)}
+.think .body{padding:2px 14px 13px;color:rgba(255,255,255,.44);font-family:var(--mono);
+  font-size:11.5px;line-height:1.62;white-space:pre-wrap}
+.err{margin-top:10px;color:var(--err);font-size:var(--fs-body);font-family:var(--mono)}
+.files{margin-top:11px;padding-top:10px;border-top:1px solid var(--edge-soft)}
+.files .t{font-size:var(--fs-micro);font-weight:700;letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--gold-dim);margin-bottom:5px}
+.files .f{font-family:var(--mono);font-size:var(--fs-micro);line-height:1.55;color:var(--muted)}
+.cursor>:last-child::after{content:"\258D";color:rgba(255,255,255,.8);margin-left:2px;
+  animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* The transcript fills the pane, so its empty state centres in it rather than
+   hanging off the top. */
+/* ---------- transcript chrome ---------- */
+/* One sticky cluster: copy the whole exchange, or search inside it. */
+#chrome{display:none;position:sticky;top:0;z-index:5;justify-content:flex-end;align-items:center;
+  gap:7px;max-width:880px;margin:0 auto;padding:8px 22px 0;pointer-events:none}
+#chrome>*{pointer-events:auto}
+#find{display:flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:999px;
+  background:var(--panel);border:1px solid var(--edge-soft);opacity:0;width:0;padding:0;
+  border-width:0;overflow:hidden;transition:opacity var(--dur-fast)}
+#find.on{opacity:1;width:auto;padding:0 9px;border-width:1px}
+#find input{background:none;border:0;outline:none;color:var(--text);font-size:var(--fs-meta);
+  width:150px}
+#find input::placeholder{color:var(--faint)}
+#findCount{font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);white-space:nowrap}
+.chromeBtn{height:26px;padding:0 11px;border-radius:999px;background:var(--panel);
+  border:1px solid var(--edge-soft);color:var(--muted);font-size:var(--fs-micro);
+  font-weight:700;letter-spacing:var(--ls-caps);text-transform:uppercase;
+  transition:color var(--dur-fast),border-color var(--dur-fast)}
+.chromeBtn:hover{color:var(--gold);border-color:var(--edge)}
+
+/* Per-message copy, revealed on hover like the code-block button. */
+/* Sits below the message on that speaker's own side: under your capsule on the
+   right, under the reply on the left. It used to float over the top-right
+   corner of the text it copies, where it collided with the reasoning block's
+   own copy button. */
+.msgCopy{margin-top:10px;color:var(--muted);background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.08);border-radius:7px;cursor:pointer;
+  opacity:0;transition:opacity var(--dur-fast),color var(--dur-fast),
+    background var(--dur-fast)}
+.msg.assistant .msgCopy{margin-right:auto}
+.msg.user .msgCopy{margin-left:auto}
+.msgCopy{opacity:.32}
+.msg:hover .msgCopy,.msgCopy:focus,.msgCopy:focus-visible{opacity:1}
+.msgCopy:focus-visible{outline:2px solid rgba(255,255,255,.45);outline-offset:2px}
+.msgCopy:hover{color:rgba(255,255,255,.9);background:rgba(255,255,255,.1);
+  border-color:rgba(255,255,255,.2)}
+.msgCopy:hover{color:var(--gold);border-color:var(--edge)}
+
+/* Search hits. mark is styled rather than left to the browser's yellow. */
+mark.hit{background:rgba(255,255,255,.24);color:inherit;border-radius:2px}
+mark.hit.current{background:var(--gold);color:#0b0e13}
+
+.empty{flex:1;display:grid;place-items:center}
+
+/* ---------- light mode ----------
+   The shared theme flips its tokens, but the transcript paints its own message
+   panels, prose and code blocks against the dark ground — white-on-transparent
+   text and near-black panels. On cream those are unreadable, so each is
+   restated rather than left to inherit. */
+@media (prefers-color-scheme: light) {
+  :root {
+    /* Hairlines have to be ink, not a white wash. */
+    --edge-soft: rgba(29, 27, 24, .14);
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse 90% 70% at 50% 30%, rgba(23,107,135,.05), transparent 70%),
+      radial-gradient(ellipse 60% 50% at 50% 100%, rgba(29,27,24,.035), transparent 70%),
+      var(--bg);
+  }
+
+  /* Message panels: a raised card on cream rather than a lighter hole. */
+  .msg {
+    background: linear-gradient(180deg, rgba(252,249,243,.98), rgba(248,244,237,.98));
+    border-color: rgba(29, 27, 24, .10);
+    box-shadow: 0 1px 2px rgba(35,36,39,.05);
+  }
+  .msg.user { background: linear-gradient(180deg, rgba(240,236,228,.96), rgba(235,230,221,.96)); }
+  .msg.user .bar { background: linear-gradient(180deg, rgba(29,27,24,.28), transparent); }
+
+  .plain { color: var(--text); }
+  .md { color: var(--text); }
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { color: var(--text); }
+  .md strong { color: var(--text); }
+  .md em { color: var(--muted); }
+  .md blockquote { color: var(--muted); }
+
+  /* Inline code and blocks: ink on a faint tint, not gold on black. */
+  .md code { background: rgba(29,27,24,.06); color: var(--text); }
+  .md pre { background: rgba(29,27,24,.045); }
+  .md pre code { color: var(--text); }
+  .md th { background: rgba(29,27,24,.05); }
+  .md th, .md td { border-bottom-color: rgba(29,27,24,.10); }
+  .md tbody tr:hover { background: rgba(29,27,24,.025); }
+
+  .copy, .msgCopy, .chromeBtn, #find, .thinkCopy { background: rgba(252,249,243,.92); }
+  mark.hit { background: rgba(23,107,135,.22); }
+  mark.hit.current { background: #d9b45a; color: #1d1b18; }
+  .think { background: rgba(23,107,135,.05); border-color: rgba(23,107,135,.20); }
+  .think .body { color: var(--muted); }
+}
+
+/* ---------------------------------------------------------------- *
+   Assistant chrome
+   The transcript styles above are chat.html's, unchanged. Everything
+   below is the shell around it: header, conversation rail, composer.
+   `body.compact` strips all of it back to the bare transcript, which is
+   what the menu-bar window loads.
+ * ---------------------------------------------------------------- */
+#app{position:relative;display:flex;flex-direction:column;height:100%;isolation:isolate}
+#main{flex:1;display:flex;min-height:0}
+#center{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+body.compact #topbar,body.compact #rail,body.compact #composer{display:none}
+
+/* ---------- header ---------- */
+#topbar{display:flex;align-items:center;gap:10px;padding:13px 20px;
+  border-bottom:1px solid rgba(255,255,255,.07);
+  background:rgba(9,10,12,.55);
+  backdrop-filter:blur(26px) saturate(160%);
+  -webkit-backdrop-filter:blur(26px) saturate(160%)}
+#topbar .id{min-width:0}
+#topbar .t{font-size:14px;font-weight:650;letter-spacing:-.02em}
+#topbar .s{margin-top:2px;font-size:11px;opacity:.55;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;max-width:38ch}
+#topbar .spacer{flex:1}
+
+.seg{display:flex;gap:2px;padding:2px;border-radius:999px;
+  background:rgba(255,255,255,.06)}
+.seg button{padding:5px 13px;border-radius:999px;font-size:11.5px;
+  color:rgba(255,255,255,.55);background:none;border:0;cursor:pointer}
+.seg button[aria-selected="true"]{background:rgba(255,255,255,.14);
+  color:#fff;font-weight:600}
+
+/* Were 28px with a 13px glyph at 50%: hittable in theory, too faint to aim
+   at in practice. You aim at what you can see. */
+.tool{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;
+  border:0;background:none;color:rgba(255,255,255,.62);cursor:pointer;font-size:15px}
+.tool:hover{background:rgba(255,255,255,.1);color:#fff}
+.tool:focus-visible{outline:2px solid rgba(255,255,255,.45);outline-offset:2px}
+.tool[aria-pressed="true"]{color:var(--gold,#e8c789)}
+
+.modelBadge{display:flex;align-items:center;gap:7px;padding:5px 11px;
+  border-radius:999px;border:1px solid rgba(255,255,255,.12);
+  background:none;color:inherit;font-size:11.5px;cursor:pointer;max-width:230px}
+.modelBadge{min-height:32px;background:rgba(255,255,255,.045)}
+.modelBadge:hover{border-color:rgba(255,255,255,.26);background:rgba(255,255,255,.08)}
+.modelBadge:focus-visible{outline:2px solid rgba(255,255,255,.45);outline-offset:2px}
+.modelBadge .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.modelBadge .flag{flex:none;padding:1px 5px;border-radius:4px;font-size:9px;
+  letter-spacing:.08em;background:rgba(255,90,80,.16);color:#ff6a60}
+
+/* ---------- conversation rail ---------- */
+#rail{flex:0 0 236px;display:flex;flex-direction:column;min-height:0;
+  border-right:1px solid var(--edge,rgba(255,255,255,.08));
+  background:rgba(255,255,255,.015)}
+#rail[hidden]{display:none}
+#rail .head{padding:10px 10px 7px}
+#rail input{width:100%;padding:7px 10px;border-radius:8px;font-size:11.5px;
+  border:1px solid rgba(255,255,255,.09);background:rgba(0,0,0,.28);
+  color:inherit;outline:none}
+#rail input::placeholder{color:rgba(255,255,255,.28)}
+#rail input:focus{border-color:rgba(255,255,255,.28)}
+#convos{flex:1;min-height:0;overflow-y:auto;padding:0 7px 10px}
+.convo{display:block;width:100%;text-align:left;padding:7px 9px;margin-bottom:1px;
+  border:0;border-radius:7px;background:none;color:inherit;cursor:pointer}
+.convo:hover{background:rgba(255,255,255,.055)}
+.convo[aria-current="true"]{background:rgba(255,255,255,.085)}
+.convo .ct{flex:1;min-width:0;font-size:12.5px;line-height:1.35;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.convo .cm{margin-top:1px;font-size:10px;opacity:.34;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.convo .row{display:flex;align-items:center;gap:4px}
+
+/* Hover-only, and sized to be hit rather than squinted at. Reserving the
+   width stops the title reflowing every time the pointer crosses a row. */
+.convo .acts{margin-left:auto;display:flex;gap:1px;flex:none;
+  width:48px;justify-content:flex-end;opacity:0;
+  transition:opacity .12s ease}
+.convo:hover .acts,.convo:focus-within .acts{opacity:1}
+.convo .acts span{
+  display:grid;place-items:center;width:22px;height:22px;border-radius:6px;
+  font-size:11px;line-height:1;color:rgba(255,255,255,.5);
+}
+.convo .acts span:hover{background:rgba(255,255,255,.14);color:#fff}
+.convo .acts [data-del]:hover{background:rgba(255,59,48,.2);color:#ff6a60}
+#railEmpty{padding:14px 12px;font-size:11px;opacity:.4;line-height:1.6}
+
+/* ---------- composer ---------- */
+#composer{border-top:1px solid rgba(255,255,255,.07);
+  background:rgba(9,10,12,.62);padding:11px 20px 15px;
+  backdrop-filter:blur(26px) saturate(160%);
+  -webkit-backdrop-filter:blur(26px) saturate(160%)}
+#composer > *{max-width:80ch;margin-left:auto;margin-right:auto}
+#notices{display:flex;flex-direction:column;gap:5px;margin-bottom:8px}
+#notices:empty{display:none}
+.notice{display:flex;gap:7px;padding:7px 10px;border-radius:8px;font-size:11.5px;
+  line-height:1.45}
+.notice.err{background:rgba(255,90,80,.11);border:1px solid rgba(255,90,80,.28);color:#ff8078}
+.notice.warn{background:rgba(230,180,70,.1);border:1px solid rgba(230,180,70,.26);color:#e8b84a}
+.notice.info{background:rgba(255,255,255,.05);color:rgba(255,255,255,.55)}
+
+#metaBar{display:flex;align-items:center;gap:12px;margin-bottom:7px;
+  font-size:10.5px;opacity:.5}
+#metaBar .spacer{flex:1}
+#metaBar button{border:0;background:none;color:inherit;cursor:pointer;
+  font-size:10.5px;opacity:.8;padding:2px 6px;border-radius:5px}
+#metaBar button:hover{background:rgba(255,255,255,.1);opacity:1}
+#ctxTrack{width:70px;height:3px;border-radius:2px;background:rgba(255,255,255,.12);
+  overflow:hidden}
+#ctxFill{height:100%;width:0;background:var(--gold,#e8c789);
+  transition:width .3s ease,background .3s ease}
+#ctxFill.hot{background:#ff6a60}
+
+#inputRow{display:flex;align-items:flex-end;gap:9px}
+#prompt{flex:1;min-height:40px;max-height:180px;padding:11px 15px;border-radius:12px;
+  border:1px solid rgba(255,255,255,.11);background:rgba(0,0,0,.34);color:inherit;
+  font:inherit;font-size:13.5px;line-height:1.55;resize:none;outline:none;
+  transition:border-color .16s ease,background .16s ease}
+#prompt:focus{border-color:rgba(255,255,255,.34);background:rgba(0,0,0,.5);
+  box-shadow:0 0 0 3px rgba(255,255,255,.05)}
+#send,#stopBtn{flex:none;width:34px;height:34px;border-radius:50%;border:0;
+  cursor:pointer;display:grid;place-items:center;font-size:14px}
+#send{background:var(--gold,#e8c789);color:#0b0b0f}
+#send:disabled{background:rgba(255,255,255,.1);color:rgba(255,255,255,.3);cursor:default}
+#stopBtn{background:rgba(255,90,80,.18);color:#ff6a60;
+  border:1px solid rgba(255,90,80,.36)}
+#stopBtn[hidden],#send[hidden]{display:none}
+
+#prompts{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+#prompts:empty{display:none}
+.savedPrompt{padding:4px 9px;border-radius:999px;font-size:10.5px;cursor:pointer;
+  border:1px solid rgba(255,255,255,.1);background:none;color:rgba(255,255,255,.6)}
+.savedPrompt:hover{border-color:rgba(255,255,255,.26);color:#fff}
+.savedPrompt span{margin-left:5px;opacity:.45}
+
+/* ---------- sheets ---------- */
+#veil{position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(3px);
+  z-index:60}
+#veil[hidden],#sheet[hidden]{display:none}
+#sheet{position:fixed;z-index:61;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:min(560px,92vw);max-height:84vh;overflow-y:auto;padding:20px 22px;
+  border-radius:16px;background:#111117;border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 30px 80px rgba(0,0,0,.7)}
+#sheet h3{margin:0 0 14px;font-size:15px;font-weight:640}
+.field{margin-bottom:13px}
+.field label{display:block;margin-bottom:5px;font-size:11px;opacity:.55}
+.field input[type=text],.field input[type=number],.field textarea,.field select{
+  width:100%;padding:8px 11px;border-radius:9px;font:inherit;font-size:12.5px;
+  border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:inherit;
+  outline:none}
+.field textarea{min-height:78px;resize:vertical;line-height:1.5}
+.field .hint{margin-top:4px;font-size:10.5px;opacity:.4;line-height:1.5}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.foot{display:flex;gap:8px;margin-top:18px}
+.foot .spacer{flex:1}
+.btn{padding:8px 15px;border-radius:9px;font-size:12px;cursor:pointer;
+  border:1px solid rgba(255,255,255,.14);background:none;color:inherit}
+.btn.primary{background:var(--gold,#e8c789);color:#0b0b0f;border-color:transparent;
+  font-weight:600}
+.btn.danger{color:#ff6a60;border-color:rgba(255,90,80,.34)}
+#modelList{max-height:46vh;overflow-y:auto;margin:2px -4px 0;padding:0 4px}
+.modelRow{display:flex;align-items:flex-start;gap:12px;width:100%;padding:10px 11px;
+  margin-bottom:2px;
+  border:0;border-radius:10px;background:none;color:inherit;cursor:pointer;text-align:left}
+.modelRow:hover{background:rgba(255,255,255,.06)}
+.modelRow[aria-current="true"]{background:rgba(255,255,255,.1);
+  box-shadow:inset 2px 0 0 rgba(255,255,255,.7)}
+.modelRow.off{opacity:.45}
+.modelRow .mid{flex:1;min-width:0}
+.modelRow .mn{font-size:13px;line-height:1.35;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* What the model is, pulled out of the id so it can be read at a glance. */
+.modelRow .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.modelRow .tag{padding:2px 7px;border-radius:5px;font-size:10px;line-height:1.5;
+  background:rgba(255,255,255,.07);color:rgba(255,255,255,.6)}
+.modelRow .tag.warn{background:rgba(255,159,10,.14);color:#ffb340}
+.modelRow .tag.off{background:rgba(255,59,48,.14);color:#ff6a60}
+
+/* Kept, quietly: two builds can share a display name. */
+.modelRow .mid-id{margin-top:5px;font-family:var(--mono);font-size:9.5px;
+  color:rgba(255,255,255,.24);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.modelRow .star{flex:none;display:grid;place-items:center;width:28px;height:28px;
+  border-radius:7px;opacity:.3;font-size:14px}
+.modelRow .star:hover{opacity:.85;background:rgba(255,255,255,.1)}
+.modelRow .star.on{opacity:1;color:rgba(255,255,255,.95)}
+
+.modelNote{padding:14px 11px;font-size:11.5px;line-height:1.6;
+  color:rgba(255,255,255,.4)}
+
+/* ---------- settings sheet ---------- */
+/* A number in a box tells you nothing about what it does. Each setting here is
+   a slider with the value in plain units beside it and a line underneath
+   saying what that value means in practice. */
+.tunable{margin-bottom:20px}
+.tuneHead{display:flex;align-items:baseline;justify-content:space-between;
+  gap:12px;margin-bottom:9px}
+.tuneHead label{margin:0;font-size:12.5px;color:rgba(255,255,255,.82)}
+.tuneVal{font-family:var(--mono);font-size:11.5px;color:rgba(255,255,255,.95);
+  font-variant-numeric:tabular-nums}
+
+.field input[type=range]{
+  -webkit-appearance:none;appearance:none;
+  width:100%;height:22px;background:none;cursor:pointer;outline:none;
+}
+.field input[type=range]::-webkit-slider-runnable-track{
+  height:4px;border-radius:2px;background:rgba(255,255,255,.13);
+}
+.field input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;
+  width:16px;height:16px;margin-top:-6px;border-radius:50%;
+  background:rgba(255,255,255,.92);
+  box-shadow:0 1px 4px rgba(0,0,0,.5);
+}
+.field input[type=range]:focus-visible::-webkit-slider-thumb{
+  box-shadow:0 0 0 4px rgba(255,255,255,.22);
+}
+
+.field .hint{margin-top:7px;font-size:11px;line-height:1.6;
+  color:rgba(255,255,255,.42);max-width:62ch}
+
+/* The persona is the longest thing anyone edits here, so it gets the room. */
+.personaBox{
+  min-height:230px;font-family:var(--mono);font-size:12px;line-height:1.65;
+  padding:13px 15px;resize:vertical;
+}
+
+.check{display:flex;align-items:center;gap:9px;font-size:12.5px;cursor:pointer;
+  color:rgba(255,255,255,.82)}
+.check input{width:15px;height:15px;accent-color:rgba(255,255,255,.9);cursor:pointer}
+
+/* Wider than a dialog, because a persona at 40 characters a line is unreadable. */
+#sheet{width:min(660px,94vw)}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="id">
+      <div class="t">Assistant</div>
+      <div class="s" id="subtitle">Nothing between you and the model</div>
+    </div>
+    <div class="seg" id="modeSeg" role="tablist">
+      <button type="button" role="tab" data-mode="direct" aria-selected="true">Direct</button>
+      <button type="button" role="tab" data-mode="sovereign" aria-selected="false">Sovereign</button>
+    </div>
+    <span class="spacer"></span>
+    <button class="modelBadge" id="modelBadge" type="button" title="Choose a model">
+      <span class="nm" id="modelName">—</span>
+    </button>
+    <button class="tool" id="stopSpeak" type="button" title="Stop speaking" hidden>&#9209;</button>
+    <button class="tool" id="openSettings" type="button" title="Sampling, voice and persona">&#9881;</button>
+    <button class="tool" id="newChat" type="button" title="New conversation">&#43;</button>
+    <button class="tool" id="toggleRail" type="button" title="Saved conversations"
+            aria-pressed="false">&#9776;</button>
+  </header>
+
+  <div id="main">
+    <aside id="rail" hidden>
+      <div class="head">
+        <input id="convoSearch" placeholder="Search conversations" spellcheck="false"
+               aria-label="Search conversations">
+      </div>
+      <div id="convos"></div>
+      <div id="railEmpty" hidden>No saved conversations yet.</div>
+    </aside>
+
+    <div id="center">
+<div id="chrome">
+  <div id="find">
+    <input id="findInput" placeholder="Find in transcript" spellcheck="false"
+           aria-label="Find in transcript">
+    <span id="findCount"></span>
+  </div>
+  <button class="chromeBtn" id="copyAll" type="button" title="Copy the whole exchange as Markdown">Copy all</button>
+</div>
+<div id="log">
+  <div class="empty">
+    <div class="atlas-empty">
+      <div class="atlas-empty__mark">&#9671;</div>
+      <div class="atlas-empty__title">No conversation yet</div>
+      <div class="atlas-empty__body">Your exchange with ATLAS appears here. Replies stream
+        in as they are written, and code blocks can be copied straight out of the
+        transcript.</div>
+    </div>
+  </div>
+</div>
+    </div>
+  </div>
+
+  <footer id="composer">
+    <div id="notices"></div>
+    <div id="metaBar">
+      <span id="statusLine">Ready</span>
+      <span class="spacer"></span>
+      <span id="ctxLabel"></span>
+      <div id="ctxTrack" title="How full this model's context window is"><div id="ctxFill"></div></div>
+      <button type="button" id="editLast" title="Rewrite your last message">Edit last</button>
+      <button type="button" id="exportBtn" title="Copy the transcript">Export</button>
+    </div>
+    <div id="inputRow">
+      <textarea id="prompt" rows="1" placeholder="Message the model…"
+                aria-label="Message"></textarea>
+      <button id="send" type="button" title="Send · Shift+Enter for a new line">&#8593;</button>
+      <button id="stopBtn" type="button" title="Stop generating" hidden>&#9632;</button>
+    </div>
+    <div id="prompts"></div>
+  </footer>
+</div>
+
+<div id="veil" hidden></div>
+<div id="sheet" hidden role="dialog" aria-modal="true"></div>
+
+<script>
+'use strict';
+/* ---------- markdown renderer ----------
+   Ported verbatim from the verified standalone build. Every branch that can
+   emit model text routes through escapeHtml first. Covered by
+   Tests/chat_render_test.js — keep that passing. */
+/* The renderer lives in markdown.js, injected by the host and shared with the
+   canvas page. Read through wrappers rather than captured at parse time: a page
+   that dies on its first line renders nothing at all. */
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g, ch =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function renderMarkdown(text){
+  if (window.atlasMarkdown && window.atlasMarkdown.renderMarkdown){
+    return window.atlasMarkdown.renderMarkdown(text);
+  }
+  return '<p>' + escapeHtml(text || '').replace(/\n/g, '<br>') + '</p>';
+}
+
+/* ---------- transcript ---------- */
+const log=document.getElementById('log');
+const nearBottom=()=>window.innerHeight+window.scrollY>=document.body.scrollHeight-140;
+
+function addCopyButtons(scope){
+  scope.querySelectorAll('pre').forEach(pre=>{
+    if(pre.querySelector('.copy'))return;
+    const b=document.createElement('button');
+    b.className='copy';b.type='button';
+    b.setAttribute('aria-label','Copy this code');b.title='Copy this code';
+    setIcon(b,'copy');
+    b.addEventListener('click',()=>{
+      const code=pre.querySelector('code');
+      writeClipboard(code?code.textContent:'',b,'copy');
+    });
+    pre.appendChild(b);
+  });
+}
+
+/* Builds one message node. Everything model-authored is set with textContent
+   or passed through renderMarkdown; nothing is concatenated into innerHTML raw. */
+function buildMessage(m){
+  const el=document.createElement('div');
+  el.className='msg '+(m.role==='User'?'user':'assistant');
+  el.dataset.id=m.id;
+
+  const bar=document.createElement('div');
+  bar.className='bar';
+
+  const inner=document.createElement('div');
+  inner.className='inner';
+
+  const meta=document.createElement('div');
+  meta.className='meta';
+  const who=document.createElement('span');
+  who.className='who';
+  who.textContent=m.speaker||m.role||'';
+  meta.appendChild(who);
+  if(m.subtitle){
+    const sub=document.createElement('span');
+    sub.className='sub';
+    sub.textContent=m.subtitle;
+    meta.appendChild(sub);
+  }
+  inner.appendChild(meta);
+
+  if(m.role!=='User'){
+    const think=document.createElement('details');
+    think.className='think';
+    think.hidden=!m.reasoning;
+    think.open=true; // Deliberate: reasoning stays visible, not folded away
+    const summary=document.createElement('summary');
+    const label=document.createElement('span');
+    label.textContent='Thinking';
+    const sp=document.createElement('span');
+    sp.className='sp';
+    const thinkCopy=document.createElement('button');
+    thinkCopy.className='thinkCopy';thinkCopy.type='button';
+    thinkCopy.setAttribute('aria-label','Copy the reasoning');
+    thinkCopy.title='Copy the reasoning';
+    setIcon(thinkCopy,'copy');
+    thinkCopy.addEventListener('click',e=>{
+      // Inside a <summary>, so the click has to be stopped from toggling the
+      // disclosure open and shut every time the button is used.
+      e.preventDefault();e.stopPropagation();
+      writeClipboard(el._reasoning||'',thinkCopy,'copy');
+    });
+    summary.appendChild(label);summary.appendChild(sp);summary.appendChild(thinkCopy);
+    const tbody=document.createElement('div');
+    tbody.className='body';
+    tbody.textContent=m.reasoning||'';
+    el._reasoning=m.reasoning||'';
+    think.appendChild(summary);think.appendChild(tbody);
+    inner.appendChild(think);
+    el._think=think;el._tbody=tbody;
+  }
+
+  el._raw=m.text||'';
+  el._role=m.role||'';
+
+  const body=document.createElement('div');
+  if(m.role==='User'){body.className='plain';body.textContent=m.text||''}
+  else{body.className='md';body.innerHTML=renderMarkdown(m.text||'');addCopyButtons(body)}
+  inner.appendChild(body);
+  el._body=body;
+
+  if(m.error){
+    const e=document.createElement('div');
+    e.className='err';
+    e.textContent=m.error;
+    inner.appendChild(e);
+  }
+  if(m.files&&m.files.length){
+    const wrap=document.createElement('div');
+    wrap.className='files';
+    const t=document.createElement('div');
+    t.className='t';
+    t.textContent='Context files shared ('+m.files.length+')';
+    wrap.appendChild(t);
+    m.files.slice(0,5).forEach(f=>{
+      const d=document.createElement('div');
+      d.className='f';
+      d.textContent='• '+f;
+      wrap.appendChild(d);
+    });
+    inner.appendChild(wrap);
+  }
+
+  el.appendChild(bar);el.appendChild(inner);
+  return el;
+}
+
+const nodes=new Map();
+
+function setAll(messages){
+  const stick=nearBottom();
+  log.textContent='';
+  nodes.clear();
+  if(!messages||!messages.length){
+    const e=document.createElement('div');
+    e.className='empty';
+    // Composed rather than a single tracked-out line. Deliberately says nothing
+    // about projects or suggested prompts: this page has no channel back into
+    // the app and is handed no project data, so any starter action here would
+    // be a button that cannot do anything.
+    e.innerHTML='<div class="atlas-empty">' +
+      '<div class="atlas-empty__mark">&#9671;</div>' +
+      '<div class="atlas-empty__title">No conversation yet</div>' +
+      '<div class="atlas-empty__body">Your exchange with ATLAS appears here. Replies stream in as they are written, and code blocks can be copied straight out of the transcript.</div>' +
+    '</div>';
+    log.appendChild(e);
+    return;
+  }
+  messages.forEach(m=>{
+    const el=buildMessage(m);
+    nodes.set(m.id,el);
+    log.appendChild(el);
+    // History is already finished, so every message gets its Copy immediately.
+    if(!m.streaming)addMessageCopy(el);
+  });
+  if(stick)window.scrollTo(0,document.body.scrollHeight);
+}
+
+function update(m){
+  const stick=nearBottom();
+  let el=nodes.get(m.id);
+  if(!el){
+    const empty=log.querySelector('.empty');
+    if(empty)empty.remove();
+    el=buildMessage(m);
+    nodes.set(m.id,el);
+    log.appendChild(el);
+  }
+  el.classList.toggle('live',!!m.streaming);
+  if(el._think){
+    const has=!!m.reasoning;
+    el._think.hidden=!has;
+    if(has){
+      /* Follow the stream only while the reader is already at the bottom. This
+         used to pin unconditionally, so scrolling up to re-read an earlier line
+         was undone by the very next token. Measured before the text is
+         replaced, because that resets the scroll metrics. */
+      const box=el._tbody;
+      const pinned=box.scrollHeight-box.scrollTop-box.clientHeight<24;
+      box.textContent=m.reasoning;
+      el._reasoning=m.reasoning;
+      if(pinned)box.scrollTop=box.scrollHeight;
+    }
+  }
+  /* classList, not className: the streaming cursor adds a second class, and an
+     equality check against 'md' silently stopped matching after the first token
+     — which dumped raw markdown into the transcript for the rest of the reply. */
+  if(el._body.classList.contains('md')){
+    el._body.innerHTML=renderMarkdown(m.text||'');
+    el._body.classList.toggle('cursor',!!m.streaming);
+    if(!m.streaming)addCopyButtons(el._body);
+  }else el._body.textContent=m.text||'';
+  el._raw=m.text||'';
+  if(!m.streaming)addMessageCopy(el);
+  if(stick)window.scrollTo(0,document.body.scrollHeight);
+}
+
+/* ---------- copy ---------- */
+
+/* One Copy per finished message. The raw markdown is copied rather than the
+   rendered text, so what lands on the clipboard is what the model actually
+   wrote — headings and code fences intact. */
+function addMessageCopy(el){
+  if(el.querySelector('.msgCopy'))return;
+  const b=document.createElement('button');
+  b.className='msgCopy';b.type='button';
+  b.setAttribute('aria-label','Copy this message as Markdown');
+  b.title='Copy this message as Markdown';
+  setIcon(b,'copy');
+  b.addEventListener('click',e=>{
+    e.stopPropagation();
+    writeClipboard(el._raw||'',b,'Copy');
+  });
+  // Your message is a capsule with a background, so the button has to be a
+  // sibling of it to land underneath rather than inside. The model's reply has
+  // no container, so `.inner` already puts the button under the text.
+  const host = el.classList.contains('user') ? el : (el.querySelector('.inner') || el);
+  host.appendChild(b);
+}
+
+/* The whole exchange as Markdown, speaker-labelled. */
+function conversationMarkdown(){
+  const out=[];
+  log.querySelectorAll('.msg').forEach(el=>{
+    const who=(el._role||'').trim()||(el.classList.contains('user')?'User':'Assistant');
+    out.push('## '+who+'\n\n'+(el._raw||'').trim());
+  });
+  return out.join('\n\n---\n\n')+'\n';
+}
+
+/* Lucide-style line icons, drawn inline: 24x24, 2px round stroke, currentColor.
+   Inline because the page loads no files at all — see the CSP note up top. */
+const ICON={
+  copy:'<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>'+
+       '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  check:'<path d="M20 6 9 17l-5-5"/>',
+  x:'<path d="M18 6 6 18M6 6l12 12"/>'
+};
+
+function icon(name){
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('viewBox','0 0 24 24');
+  svg.setAttribute('fill','none');
+  svg.setAttribute('stroke','currentColor');
+  svg.setAttribute('stroke-width','2');
+  svg.setAttribute('stroke-linecap','round');
+  svg.setAttribute('stroke-linejoin','round');
+  svg.setAttribute('aria-hidden','true');
+  // Fixed strings from ICON above, never anything a model wrote.
+  svg.innerHTML=ICON[name]||'';
+  return svg;
+}
+
+function setIcon(button,name){
+  button.textContent='';
+  button.appendChild(icon(name));
+}
+
+/* Icon-only buttons, so the confirmation is a tick rather than a word. */
+function writeClipboard(text,button,restore){
+  const done=(name,label)=>{
+    setIcon(button,name);
+    button.classList.toggle('ok',name==='check');
+    button.classList.toggle('bad',name==='x');
+    setTimeout(()=>{
+      setIcon(button,restore);
+      button.classList.remove('ok','bad');
+    },1200);
+  };
+  navigator.clipboard.writeText(text)
+    .then(()=>done('check'))
+    .catch(()=>done('x'));
+}
+
+document.getElementById('copyAll').addEventListener('click',()=>{
+  const b=document.getElementById('copyAll');
+  const text=conversationMarkdown();
+  if(!text.trim()){b.textContent='Nothing yet';setTimeout(()=>{b.textContent='Copy all'},1200);return}
+  writeClipboard(text,b,'Copy all');
+});
+
+/* ---------- find in transcript ---------- */
+
+/* Walks text nodes and wraps matches in <mark>. Working on text nodes rather
+   than innerHTML means a search can never re-parse model output as markup. */
+const find={box:document.getElementById('find'),
+            input:document.getElementById('findInput'),
+            count:document.getElementById('findCount'),
+            hits:[],at:-1};
+
+function clearHits(){
+  find.hits=[];find.at=-1;
+  log.querySelectorAll('mark.hit').forEach(mark=>{
+    const parent=mark.parentNode;
+    parent.replaceChild(document.createTextNode(mark.textContent),mark);
+    parent.normalize();
+  });
+}
+
+function runFind(term){
+  clearHits();
+  const needle=String(term||'').trim().toLowerCase();
+  if(!needle){find.count.textContent='';return}
+
+  const walker=document.createTreeWalker(log,NodeFilter.SHOW_TEXT,{
+    acceptNode(node){
+      if(!node.nodeValue||!node.nodeValue.toLowerCase().includes(needle))return NodeFilter.FILTER_REJECT;
+      // Skip the button labels this file added, so "copy" does not match itself.
+      if(node.parentElement.closest('.msgCopy,.copy,#chrome'))return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const targets=[];
+  while(walker.nextNode())targets.push(walker.currentNode);
+
+  targets.forEach(node=>{
+    const text=node.nodeValue;
+    const frag=document.createDocumentFragment();
+    let i=0;
+    for(;;){
+      const at=text.toLowerCase().indexOf(needle,i);
+      if(at<0)break;
+      if(at>i)frag.appendChild(document.createTextNode(text.slice(i,at)));
+      const mark=document.createElement('mark');
+      mark.className='hit';
+      mark.textContent=text.substr(at,needle.length);
+      frag.appendChild(mark);
+      find.hits.push(mark);
+      i=at+needle.length;
+    }
+    if(i<text.length)frag.appendChild(document.createTextNode(text.slice(i)));
+    node.parentNode.replaceChild(frag,node);
+  });
+
+  find.count.textContent=find.hits.length?('1/'+find.hits.length):'none';
+  if(find.hits.length){find.at=0;focusHit()}
+}
+
+function focusHit(){
+  find.hits.forEach(h=>h.classList.remove('current'));
+  const hit=find.hits[find.at];
+  if(!hit)return;
+  hit.classList.add('current');
+  hit.scrollIntoView({block:'center'});
+  find.count.textContent=(find.at+1)+'/'+find.hits.length;
+}
+
+function stepHit(delta){
+  if(!find.hits.length)return;
+  find.at=(find.at+delta+find.hits.length)%find.hits.length;
+  focusHit();
+}
+
+function openFind(){
+  find.box.classList.add('on');
+  find.input.focus();
+  find.input.select();
+}
+
+function closeFind(){
+  find.box.classList.remove('on');
+  find.input.value='';
+  clearHits();
+  find.count.textContent='';
+}
+
+let findTimer=null;
+find.input.addEventListener('input',()=>{
+  clearTimeout(findTimer);
+  findTimer=setTimeout(()=>runFind(find.input.value),140);
+});
+find.input.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();stepHit(e.shiftKey?-1:1)}
+  if(e.key==='Escape'){e.preventDefault();closeFind()}
+});
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='f'){e.preventDefault();openFind()}
+  if(e.key==='Escape'&&find.box.classList.contains('on'))closeFind();
+});
+
+/* Swift calls these. Arguments arrive as JSON strings so nothing is eval'd. */
+window.atlasChat={
+  setAll(json){try{setAll(JSON.parse(json))}catch(e){console.error('setAll',e)}},
+  update(json){try{update(JSON.parse(json))}catch(e){console.error('update',e)}},
+  clear(){setAll([])},
+  /* test hook, unused by the app */
+  _render:renderMarkdown
+};
+
+/* ================================================================== *
+   Assistant shell
+   Everything above is chat.html's transcript renderer, untouched. This
+   half is the chrome around it and the only part that talks to Swift.
+ * ================================================================== */
+
+function post(message){
+  if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.atlas){
+    window.webkit.messageHandlers.atlas.postMessage(JSON.stringify(message));
+  }
+}
+function parseJSON(json){ try{return JSON.parse(json)}catch(e){return null} }
+const $$ = id => document.getElementById(id);
+
+/* The page holds no truth of its own; every field here is last-known state
+   handed over by Swift, kept so a redraw does not need a round trip. */
+let state = {
+  mode:'direct', streaming:false, hasKey:true, settings:{}, conversations:[],
+  models:[], contextFill:0, editing:null
+};
+
+/* ---------- header ---------- */
+
+$$('modeSeg').addEventListener('click',e=>{
+  const b=e.target.closest('[data-mode]'); if(!b)return;
+  post({action:'setMode',mode:b.dataset.mode});
+});
+$$('newChat').addEventListener('click',()=>post({action:'newConversation'}));
+$$('stopSpeak').addEventListener('click',()=>post({action:'stopSpeaking'}));
+$$('toggleRail').addEventListener('click',()=>{
+  const rail=$$('rail'); rail.hidden=!rail.hidden;
+  $$('toggleRail').setAttribute('aria-pressed',String(!rail.hidden));
+});
+
+/* ---------- conversations ---------- */
+
+let searchTimer=null;
+$$('convoSearch').addEventListener('input',e=>{
+  // Typing a search should not post on every keystroke.
+  clearTimeout(searchTimer);
+  const q=e.target.value;
+  searchTimer=setTimeout(()=>post({action:'searchConversations',query:q}),160);
+});
+
+$$('convos').addEventListener('click',e=>{
+  const del=e.target.closest('[data-del]');
+  if(del){ post({action:'deleteConversation',id:del.dataset.del}); return }
+  const ren=e.target.closest('[data-ren]');
+  if(ren){ openRename(ren.dataset.ren,ren.dataset.title||''); return }
+  const row=e.target.closest('[data-open]');
+  if(row) post({action:'openConversation',id:row.dataset.open});
+});
+
+function renderConversations(payload){
+  const host=$$('convos'), rows=(payload&&payload.rows)||[];
+  $$('railEmpty').hidden = rows.length>0;
+  host.textContent='';
+  rows.forEach(c=>{
+    const b=document.createElement('button');
+    b.className='convo'; b.type='button';
+    b.dataset.open=c.id;
+    if(c.current) b.setAttribute('aria-current','true');
+
+    const row=document.createElement('div'); row.className='row';
+    const t=document.createElement('span'); t.className='ct';
+    // Titles are user text and can be anything; textContent, never innerHTML.
+    t.textContent=c.title||'Untitled';
+    row.appendChild(t);
+
+    const acts=document.createElement('span'); acts.className='acts';
+    const ren=document.createElement('span');
+    ren.textContent='\u270E'; ren.title='Rename';
+    ren.dataset.ren=c.id; ren.dataset.title=c.title||'';
+    const del=document.createElement('span');
+    del.textContent='\u2715'; del.title='Delete';
+    del.dataset.del=c.id;
+    acts.appendChild(ren); acts.appendChild(del);
+    row.appendChild(acts);
+    b.appendChild(row);
+
+    const m=document.createElement('div'); m.className='cm';
+    // The full model id runs to 60+ characters and is the same on every row.
+    // The tail is the part that differs, and the time is what you actually
+    // scan for; the whole id stays in the tooltip.
+    m.textContent=(c.updated||'');
+    b.title=(c.title||'Untitled')+(c.model?'\n'+c.model:'');
+    b.appendChild(m);
+    host.appendChild(b);
+  });
+  if(payload&&payload.currentTitle!==undefined){
+    $$('subtitle').textContent = payload.currentTitle || 'Direct model · no tools';
+  }
+}
+
+/* ---------- composer ---------- */
+
+const promptBox=$$('prompt');
+
+function autoGrow(){
+  promptBox.style.height='auto';
+  promptBox.style.height=Math.min(promptBox.scrollHeight,180)+'px';
+}
+promptBox.addEventListener('input',()=>{ autoGrow(); refreshSend() });
+
+promptBox.addEventListener('keydown',e=>{
+  // Enter sends; Shift+Enter is a newline. Matches the SwiftUI composer.
+  if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); submit() }
+});
+
+$$('send').addEventListener('click',submit);
+$$('stopBtn').addEventListener('click',()=>post({action:'stop'}));
+$$('exportBtn').addEventListener('click',()=>post({action:'exportTranscript'}));
+$$('editLast').addEventListener('click',()=>{
+  const mine=[...document.querySelectorAll('#log .msg.user')].pop();
+  if(!mine) return;
+  state.editing = mine.dataset.id;
+  promptBox.value = mine._raw || '';
+  autoGrow(); refreshSend(); promptBox.focus();
+  note('Editing your last message — send to replace it.');
+});
+
+function submit(){
+  const text=promptBox.value.trim();
+  if(!text||state.streaming) return;
+  if(state.editing){
+    post({action:'editAndResend',id:state.editing,text:text});
+    state.editing=null;
+  } else {
+    post({action:'send',text:text});
+  }
+  promptBox.value=''; autoGrow(); refreshSend();
+}
+
+function refreshSend(){
+  const empty=!promptBox.value.trim();
+  $$('send').disabled = empty || !state.hasKey;
+}
+
+/* ---------- saved prompts ---------- */
+
+$$('prompts').addEventListener('click',e=>{
+  const del=e.target.closest('[data-delprompt]');
+  if(del){ e.stopPropagation(); post({action:'deletePrompt',text:del.dataset.delprompt}); return }
+  const use=e.target.closest('[data-prompt]');
+  if(use){ promptBox.value=use.dataset.prompt; autoGrow(); refreshSend(); promptBox.focus() }
+});
+
+function renderPrompts(list){
+  const host=$$('prompts'); host.textContent='';
+  (list||[]).forEach(text=>{
+    const b=document.createElement('button');
+    b.className='savedPrompt'; b.type='button'; b.dataset.prompt=text;
+    b.textContent = text.length>34 ? text.slice(0,34)+'…' : text;
+    const x=document.createElement('span');
+    x.textContent='×'; x.dataset.delprompt=text;
+    b.appendChild(x);
+    host.appendChild(b);
+  });
+}
+
+/* ---------- sheets ---------- */
+
+function showSheet(title,bodyNode,footNode){
+  const sheet=$$('sheet'); sheet.textContent='';
+  const h=document.createElement('h3'); h.textContent=title; sheet.appendChild(h);
+  sheet.appendChild(bodyNode);
+  if(footNode) sheet.appendChild(footNode);
+  sheet.hidden=false; $$('veil').hidden=false;
+  const first=sheet.querySelector('input,textarea,select,button');
+  if(first) first.focus();
+}
+function closeSheet(){ $$('sheet').hidden=true; $$('veil').hidden=true }
+$$('veil').addEventListener('click',closeSheet);
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&!$$('sheet').hidden) closeSheet();
+});
+
+function field(labelText,control,hint){
+  const w=document.createElement('div'); w.className='field';
+  if(labelText){ const l=document.createElement('label'); l.textContent=labelText; w.appendChild(l) }
+  w.appendChild(control);
+  if(hint){ const h=document.createElement('div'); h.className='hint'; h.textContent=hint; w.appendChild(h) }
+  return w;
+}
+function input(id,value,type){
+  const i=document.createElement('input');
+  i.type=type||'text'; i.id=id; i.value=value==null?'':String(value);
+  return i;
+}
+function footer(buttons){
+  const f=document.createElement('div'); f.className='foot';
+  const sp=document.createElement('span'); sp.className='spacer';
+  f.appendChild(sp);
+  buttons.forEach(b=>f.appendChild(b));
+  return f;
+}
+function button(label,cls,onClick){
+  const b=document.createElement('button');
+  b.className='btn'+(cls?' '+cls:''); b.type='button'; b.textContent=label;
+  b.addEventListener('click',onClick);
+  return b;
+}
+
+/* Rename */
+function openRename(id,current){
+  const body=document.createElement('div');
+  const box=input('renameInput',current);
+  body.appendChild(field('Conversation title',box));
+  showSheet('Rename conversation',body,footer([
+    button('Cancel','',closeSheet),
+    button('Save','primary',()=>{
+      post({action:'renameConversation',id:id,text:box.value});
+      closeSheet();
+    })
+  ]));
+  box.select();
+}
+
+/* Settings — sampling, persona, voice */
+
+/* Tokens are the unit the model bills in and the wrong unit to think in. A
+   token averages about 0.75 of a word in English, which is close enough to
+   turn an abstract number into something you can picture. */
+function words(tokens){
+  const n = Math.round((Number(tokens)||0) * 0.75);
+  if(n >= 1000) return '≈ ' + (n/1000).toFixed(n < 10000 ? 1 : 0) + 'k words';
+  return '≈ ' + n + ' words';
+}
+
+/* Temperature is a dial between "same answer every time" and "surprise me".
+   The number means nothing on its own, so the page says what it does. */
+function temperatureLabel(value){
+  const t = Number(value);
+  if(t <= 0.2) return 'Almost the same answer every time. Good for facts and code.';
+  if(t <= 0.5) return 'Focused. Sticks close to the most likely answer.';
+  if(t <= 0.9) return 'Balanced. The usual choice.';
+  if(t <= 1.3) return 'Loose. More variety, more surprises, more mistakes.';
+  return 'Wild. Expect it to wander off.';
+}
+
+function slider(id, value, min, max, step){
+  const i=document.createElement('input');
+  i.type='range'; i.id=id; i.min=min; i.max=max; i.step=step;
+  i.value=value;
+  return i;
+}
+
+/* A labelled row: the control, the current value, and a line saying what the
+   setting actually does at that value. */
+function tunable(labelText, control, valueNode, explainNode){
+  const w=document.createElement('div'); w.className='field tunable';
+  const head=document.createElement('div'); head.className='tuneHead';
+  const l=document.createElement('label'); l.textContent=labelText;
+  head.appendChild(l); head.appendChild(valueNode);
+  w.appendChild(head);
+  w.appendChild(control);
+  w.appendChild(explainNode);
+  return w;
+}
+
+$$('openSettings').addEventListener('click',()=>{
+  const s=state.settings||{};
+  const body=document.createElement('div');
+
+  /* ---- how predictable ---- */
+  const temp=slider('fTemp', s.temperature||0.8, 0, 2, 0.05);
+  const tempVal=document.createElement('span'); tempVal.className='tuneVal';
+  const tempWhy=document.createElement('div'); tempWhy.className='hint';
+  const paintTemp=()=>{
+    tempVal.textContent=Number(temp.value).toFixed(2);
+    tempWhy.textContent=temperatureLabel(temp.value);
+  };
+  temp.addEventListener('input',paintTemp); paintTemp();
+  body.appendChild(tunable('How predictable the answers are',temp,tempVal,tempWhy));
+
+  /* ---- reply length ---- */
+  const maxT=slider('fMax', s.maxTokens||4096, 256, 16384, 256);
+  const maxVal=document.createElement('span'); maxVal.className='tuneVal';
+  const maxWhy=document.createElement('div'); maxWhy.className='hint';
+  const paintMax=()=>{
+    maxVal.textContent=words(maxT.value);
+    maxWhy.textContent='The longest single reply it can give before it has to stop. '
+      + 'Raise it if answers get cut off mid-sentence.';
+  };
+  maxT.addEventListener('input',paintMax); paintMax();
+  body.appendChild(tunable('Longest reply',maxT,maxVal,maxWhy));
+
+  /* ---- memory ---- */
+  const modelMax=currentModelContext();
+  const ctx=slider('fCtx', s.contextTokens||32768, 2048, modelMax||131072, 1024);
+  const ctxVal=document.createElement('span'); ctxVal.className='tuneVal';
+  const ctxWhy=document.createElement('div'); ctxWhy.className='hint';
+  const paintCtx=()=>{
+    ctxVal.textContent=words(ctx.value);
+    let why='How much of this conversation gets sent back with each message. '
+      + 'Anything older than this is summarised instead of sent in full.';
+    if(modelMax) why += ' This model tops out at ' + words(modelMax) + '.';
+    ctxWhy.textContent=why;
+  };
+  ctx.addEventListener('input',paintCtx); paintCtx();
+  body.appendChild(tunable('How much it remembers',ctx,ctxVal,ctxWhy));
+
+  /* ---- persona ---- */
+  const persona=document.createElement('textarea');
+  persona.id='fPersona'; persona.value=s.persona||''; persona.rows=14;
+  persona.className='personaBox';
+  persona.spellcheck=false;
+  const pw=document.createElement('div'); pw.className='field';
+  const pl=document.createElement('label');
+  pl.textContent='Standing instructions';
+  const ph=document.createElement('div'); ph.className='hint';
+  ph.textContent='Sent invisibly at the top of every message, so it shapes how the '
+    + 'model answers without you retyping it. Empty falls back to the default. '
+    + 'Applies to ' + (s.model || 'this model') + ' only.';
+  pw.appendChild(pl); pw.appendChild(persona); pw.appendChild(ph);
+  body.appendChild(pw);
+
+  /* ---- voice ---- */
+  const voiceWrap=document.createElement('label'); voiceWrap.className='check';
+  const voice=document.createElement('input');
+  voice.type='checkbox'; voice.checked=!!s.speakReplies;
+  const vt=document.createElement('span');
+  vt.textContent='Read replies aloud';
+  voiceWrap.appendChild(voice); voiceWrap.appendChild(vt);
+  const vw=document.createElement('div'); vw.className='field';
+  vw.appendChild(voiceWrap);
+  const vh=document.createElement('div'); vh.className='hint';
+  vh.textContent='Speaks each finished reply through the local voice.';
+  vw.appendChild(vh);
+  body.appendChild(vw);
+
+  showSheet('Assistant settings',body,footer([
+    button('Cancel','',closeSheet),
+    button('Save','primary',()=>{
+      post({action:'setSampling',temperature:temp.value,
+            maxTokens:maxT.value,contextTokens:ctx.value});
+      post({action:'setPersona',model:s.model,text:persona.value});
+      post({action:'setSpeakReplies',enabled:voice.checked});
+      closeSheet();
+    })
+  ]));
+});
+
+/* The catalogue knows each model's real ceiling; without it, no claim is made. */
+function currentModelContext(){
+  const s=state.settings||{};
+  const row=(state.models||[]).find(m=>m.id===s.model);
+  return row && row.context ? row.context : 0;
+}
+
+/* Model picker */
+
+let modelQuery = '';
+
+$$('modelBadge').addEventListener('click',()=>{
+  openModelPicker();
+  // The catalogue is a network call, so the sheet opens on what we already
+  // know and fills in when it lands.
+  post({action:'refreshModels'});
+});
+
+function openModelPicker(){
+  const s=state.settings||{};
+  const body=document.createElement('div');
+
+  const search=document.createElement('input');
+  search.type='text'; search.placeholder='Filter models'; search.value=modelQuery;
+  search.addEventListener('input',e=>{
+    modelQuery=e.target.value;
+    drawModelList();
+  });
+  body.appendChild(field('',search));
+
+  const list=document.createElement('div'); list.id='modelList';
+  body.appendChild(list);
+
+  const custom=input('fModel',s.model);
+  body.appendChild(field('Or use a model id directly',custom,
+    'Any Featherless id. It is sent as typed.'));
+
+  showSheet('Model',body,footer([
+    button('Cancel','',closeSheet),
+    button('Use','primary',()=>{
+      if(custom.value.trim()) post({action:'setModel',model:custom.value.trim()});
+      closeSheet();
+    })
+  ]));
+  drawModelList();
+  search.focus();
+}
+
+/* Rows say what a model is. An id like
+   "Aimin12/Qwen3-4B-Thinking-2507-Distill-Claude-Opus-4.6-Reasoning-Abliterated"
+   carries real information — who made it, how big, whether it reasons, whether
+   it is aligned — and none of it is legible as one long string. */
+function drawModelList(){
+  const list=$$('modelList'); if(!list) return;
+  const s=state.settings||{};
+  const favourites=s.favourites||[];
+  let rows=state.models||[];
+
+  if(!rows.length){
+    // Nothing from the catalogue yet: show what we do know rather than nothing.
+    rows=favourites.map(id=>({id:id,name:id,favourite:true}));
+  }
+
+  const q=modelQuery.trim().toLowerCase();
+  if(q) rows=rows.filter(r=>(r.id||'').toLowerCase().indexOf(q)>-1);
+
+  // Starred first, then current, then the rest — the order you actually pick in.
+  rows=rows.slice().sort((a,b)=>
+    (b.favourite?1:0)-(a.favourite?1:0) ||
+    (b.current?1:0)-(a.current?1:0) ||
+    (a.id||'').localeCompare(b.id||''));
+
+  list.textContent='';
+
+  if(state.modelsError){
+    const e=document.createElement('div'); e.className='modelNote';
+    e.textContent=state.modelsError;
+    list.appendChild(e);
+  }
+  if(!rows.length){
+    const e=document.createElement('div'); e.className='modelNote';
+    e.textContent=q ? 'Nothing matches “'+modelQuery+'”.'
+                    : 'No models loaded. Type an id below to use one directly.';
+    list.appendChild(e);
+    return;
+  }
+
+  rows.slice(0,120).forEach(r=>{
+    const row=document.createElement('button');
+    row.className='modelRow'; row.type='button';
+    if(r.current) row.setAttribute('aria-current','true');
+    if(r.available===false) row.classList.add('off');
+
+    const mid=document.createElement('div'); mid.className='mid';
+
+    const nm=document.createElement('div'); nm.className='mn';
+    nm.textContent=r.name||r.id;
+    mid.appendChild(nm);
+
+    const tags=document.createElement('div'); tags.className='tags';
+    const add=(text,cls)=>{
+      if(!text) return;
+      const t=document.createElement('span');
+      t.className='tag'+(cls?' '+cls:'');
+      t.textContent=text;
+      tags.appendChild(t);
+    };
+    add(r.author);
+    add(r.contextLabel ? r.contextLabel+' context' : '');
+    if(r.uncensored) add('uncensored','warn');
+    if(r.available===false) add('not on your plan','off');
+    else if(r.gated) add('gated','off');
+    mid.appendChild(tags);
+
+    // The id still matters when two builds share a display name.
+    const idLine=document.createElement('div'); idLine.className='mid-id';
+    idLine.textContent=r.id;
+    mid.appendChild(idLine);
+
+    const star=document.createElement('span');
+    star.className='star'+(favourites.indexOf(r.id)>-1?' on':'');
+    star.textContent='★';
+    star.title='Pin to the top';
+    star.addEventListener('click',e=>{
+      e.stopPropagation();
+      post({action:'toggleFavourite',model:r.id});
+    });
+
+    row.appendChild(mid); row.appendChild(star);
+    row.addEventListener('click',()=>{ post({action:'setModel',model:r.id}); closeSheet() });
+    list.appendChild(row);
+  });
+}
+
+/* ---------- notices ---------- */
+
+function notices(list){
+  const host=$$('notices'); host.textContent='';
+  list.filter(Boolean).forEach(n=>{
+    const d=document.createElement('div');
+    d.className='notice '+(n.kind||'info');
+    d.textContent=n.text;
+    host.appendChild(d);
+  });
+}
+let noteTimer=null;
+function note(text){
+  notices([{kind:'info',text:text}]);
+  clearTimeout(noteTimer);
+  noteTimer=setTimeout(()=>applyStatus(state.status||{}),3200);
+}
+
+/* ---------- called by Swift ---------- */
+
+function applyStatus(st){
+  state.status=st;
+  state.mode = st.mode || state.mode;
+  state.streaming = !!st.streaming;
+  state.hasKey = st.hasKey !== false;
+
+  [...document.querySelectorAll('#modeSeg [data-mode]')].forEach(b=>{
+    b.setAttribute('aria-selected', String(b.dataset.mode===state.mode));
+  });
+  $$('stopSpeak').hidden = !st.speaking;
+  $$('send').hidden = state.streaming;
+  $$('stopBtn').hidden = !state.streaming;
+  refreshSend();
+
+  const pending=[];
+  if(st.error) pending.push({kind:'err',text:st.error});
+  if(!state.hasKey) pending.push({kind:'warn',
+    text:'No Featherless API key. Set FEATHERLESS_API_KEY in ~/.hermes/.env, or add one in Settings.'});
+  if(st.didSummarize) pending.push({kind:'info',
+    text:'Earlier turns were condensed to stay inside this model’s context window.'});
+  if(st.truncated) pending.push({kind:'warn',
+    text:'The reply stopped at the token ceiling. Continue to pick it up where it left off.'});
+  notices(pending);
+
+  // Status line: queued reads very differently from a slow reply.
+  let line='Ready';
+  if(state.streaming) line = st.queued ? 'Waiting for the model…'
+    : (st.tokens ? st.tokens+' tokens' : 'Generating…');
+  else if(st.tokens) line = st.tokens+' tokens';
+  $$('statusLine').textContent=line;
+
+  const fill=Math.max(0,Math.min(1,st.contextFill||0));
+  $$('ctxFill').style.width=(fill*100).toFixed(1)+'%';
+  $$('ctxFill').className = fill>0.85 ? 'hot' : '';
+  $$('ctxLabel').textContent = fill>0 ? Math.round(fill*100)+'% context' : '';
+}
+
+window.atlasAssistant = {
+  // The transcript stays chat.html's job; these delegate rather than reimplement.
+  setAll(json){ window.atlasChat.setAll(json) },
+  update(json){ window.atlasChat.update(json) },
+  clear(){ window.atlasChat.clear() },
+
+  conversations(json){ renderConversations(parseJSON(json)) },
+
+  settings(json){
+    const s=parseJSON(json); if(!s) return;
+    state.settings=s;
+    $$('modelName').textContent = s.model || '—';
+    renderPrompts(s.savedPrompts);
+  },
+
+  status(json){ const st=parseJSON(json); if(st) applyStatus(st) },
+
+  models(json){
+    const p=parseJSON(json)||{};
+    state.models=p.rows||[];
+    state.modelsError=p.error||'';
+    drawModelList();
+  },
+
+  streaming(json){
+    const p=parseJSON(json)||{};
+    state.streaming=!!p.streaming;
+    $$('send').hidden=state.streaming;
+    $$('stopBtn').hidden=!state.streaming;
+    refreshSend();
+  },
+
+  error(json){
+    const p=parseJSON(json)||{};
+    notices([{kind:'err',text:p.message||'Something went wrong'}]);
+  },
+
+  note(json){ const p=parseJSON(json)||{}; if(p.message) note(p.message) },
+
+  /* The menu-bar window loads this same page and calls this to strip the
+     chrome back to the bare transcript. One page, one renderer. */
+  compact(){ document.body.classList.add('compact') }
+};
+
+post({action:'load'});
+
+</script>
+</body>
+</html>

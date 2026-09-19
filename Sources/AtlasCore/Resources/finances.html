@@ -1,0 +1,1375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  ATLAS Finances — Money Out.
+
+  Every row on this page is the user's own text. It is written to the DOM with
+  textContent or through esc() — never as raw innerHTML — so a subscription
+  called <script> is a subscription called <script>, not a script.
+
+  Money is never arithmetic in JavaScript. Amounts arrive from Swift already in
+  whole minor units with a formatted string beside them, and every amount the
+  user types is sent back as text for Money.minorUnits to parse. Nothing here
+  multiplies a price by 100, because Number(21.28)*100 is 2127.9999999999998 and
+  the cent is gone.
+
+  The page cannot reach the network: default-src 'none' with no connect-src,
+  img-src or font-src means fetch, XHR, WebSocket, images and web fonts are all
+  refused by the policy itself rather than by convention. style-src and
+  script-src allow 'unsafe-inline' only because the shared stylesheet is
+  injected as a <style> and this file's own script is inline; there is no
+  'self', so no sibling file loads either.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATLAS Finances</title>
+<style>
+/* Shared tokens, reset, controls and components arrive from atlas-theme.css /
+   atlas-components.css, injected ahead of this block. Only the Finances page's
+   own layout lives here. */
+html,body{overflow:hidden;background:var(--bg)}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;
+  background:radial-gradient(circle at 14% -8%,rgba(255,255,255,.105),transparent 34%),
+    radial-gradient(circle at 92% 18%,rgba(255,255,255,.04),transparent 28%),
+    linear-gradient(rgba(255,255,255,.012) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.012) 1px,transparent 1px);
+  background-size:auto,auto,48px 48px,48px 48px;opacity:.72}
+#app{position:relative;display:flex;flex-direction:column;height:100%;isolation:isolate}
+
+/* ---------- toolbar ---------- */
+.bar{min-height:58px;padding:11px 18px;background:rgba(9,10,12,.84);
+  border-bottom-color:var(--edge-soft);backdrop-filter:blur(18px)}
+.bar .atlas-toolbar__id{flex:0 1 auto;min-width:0;padding-right:3px}
+.bar .atlas-toolbar__title{font-size:16px;font-weight:650;letter-spacing:-.02em}
+.bar .atlas-toolbar__context{min-width:0;overflow:hidden;text-overflow:ellipsis}
+#tabs{flex:none}
+@media (max-width:1100px){ .bar .atlas-toolbar__context{display:none} }
+@media (max-width:820px){ .bar{gap:8px}.bar .atlas-toolbar__id{display:none} }
+
+/* ---------- body ---------- */
+.scroll{flex:1;overflow-y:auto;padding:22px clamp(18px,3vw,38px) 48px;
+  scrollbar-gutter:stable}
+.section{margin-bottom:30px}
+.sectionHead{display:flex;align-items:flex-end;justify-content:space-between;
+  gap:20px;margin:0 0 12px}
+.sectionHead h2{margin:0;font-size:var(--fs-label);font-weight:640;
+  letter-spacing:var(--ls-caps);text-transform:uppercase;color:var(--muted)}
+.sectionHead .count{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-micro);color:var(--faint)}
+
+/* ---------- summary tiles ---------- */
+.tiles{display:grid;gap:12px;margin-bottom:28px;
+  grid-template-columns:repeat(auto-fit,minmax(168px,1fr))}
+.tile{padding:14px 16px 15px;border-radius:var(--r-md);background:var(--panel);
+  border:1px solid var(--edge-soft)}
+.tile dt{margin:0 0 7px;font-size:var(--fs-micro);letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--faint)}
+.tile dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:21px;font-weight:600;letter-spacing:var(--ls-tight);color:var(--text)}
+.tile .sub{margin-top:5px;font-size:var(--fs-micro);color:var(--faint)}
+.tile .sub.warn{color:var(--warn)}
+.tile .sub.err{color:var(--err)}
+
+/* ---------- rows ---------- */
+.rows{display:flex;flex-direction:column;gap:1px;border-radius:var(--r-md);
+  overflow:hidden;border:1px solid var(--edge-soft);background:var(--edge-soft)}
+.row{display:grid;align-items:center;gap:14px;padding:11px 15px;
+  background:var(--panel);
+  grid-template-columns:1fr 108px 128px 96px auto}
+.row:hover{background:var(--panel-hi)}
+.row .who{min-width:0}
+.row .name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:var(--fs-body);color:var(--text)}
+.row .meta{margin-top:3px;font-size:var(--fs-micro);color:var(--faint)}
+.row .amt{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  text-align:right;font-size:var(--fs-body);color:var(--text)}
+.row .cad{font-size:var(--fs-micro);color:var(--muted)}
+.row .due{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-micro);color:var(--muted)}
+.row .due.soon{color:var(--warn)}
+.row .due.over{color:var(--err);font-weight:600}
+.row .acts{display:flex;gap:4px;opacity:0;transition:opacity var(--dur-fast)}
+.row:hover .acts,.row:focus-within .acts{opacity:1}
+.row.inactive .name,.row.inactive .amt{opacity:.42}
+@media (max-width:900px){
+  .row{grid-template-columns:1fr 100px auto}
+  .row .cad,.row .due{display:none}
+}
+
+/* A price that moved without warning, and one that is going to. */
+.flag{display:inline-block;margin-left:7px;padding:1px 6px;border-radius:var(--r-sm);
+  font-size:var(--fs-micro);letter-spacing:var(--ls-micro);vertical-align:1px}
+.flag.rose{background:rgba(255,90,80,.16);color:var(--err)}
+.flag.fell{background:rgba(80,220,160,.15);color:var(--ok)}
+.flag.sched{background:rgba(230,180,70,.16);color:var(--warn)}
+
+/* ---------- plan & money in ---------- */
+.caveat{margin:9px 2px 0;font-size:var(--fs-micro);line-height:1.5;color:var(--faint);
+  max-width:74ch}
+.caveat[hidden]{display:none}
+
+/* Two containers, deliberately separate. `.kv` is a key/value list and styles
+   its own rows; `.list` only draws the frame and leaves its children alone.
+   When one class did both, `.kv div` outranked `.act` and flattened every
+   stacked row into a single line. */
+.kv,.list{border:1px solid var(--edge-soft);border-radius:var(--r-md);
+  overflow:hidden;background:var(--panel)}
+.kv > div{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:10px 15px;border-top:1px solid var(--edge-soft)}
+.kv > div:first-child{border-top:0}
+.kv dt{font-size:var(--fs-body);color:var(--muted)}
+.kv dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-body);color:var(--text)}
+.kv .sub{display:block;margin-top:2px;font-family:var(--sans);
+  font-size:var(--fs-micro);color:var(--faint)}
+.kv dd.ok{color:var(--ok)} .kv dd.err{color:var(--err)} .kv dd.muted{color:var(--faint)}
+.kv dt.muted{color:var(--faint)}
+
+/* Next actions, ranked. The stripe is the only colour that carries meaning. */
+.act{display:flex;align-items:flex-start;gap:13px;padding:12px 15px;
+  border-top:1px solid var(--edge-soft)}
+.act:first-child{border-top:0}
+.act::before{content:"";flex:none;width:3px;align-self:stretch;border-radius:2px;
+  background:var(--tone)}
+.act .body{flex:1;min-width:0}
+.act .t{font-size:var(--fs-body);color:var(--text)}
+.act .d{margin-top:3px;font-size:var(--fs-micro);color:var(--muted)}
+.act .i{margin-top:3px;font-size:var(--fs-micro);color:var(--tone)}
+.act .right{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.act .right .amt{font-size:var(--fs-body);color:var(--text)}
+.act .right .by{margin-top:3px;font-size:var(--fs-micro);color:var(--faint)}
+.act--urgent{--tone:var(--err)} .act--protect{--tone:var(--warn)}
+.act--improve{--tone:var(--cyan)} .act--review{--tone:var(--muted)}
+
+/* Credit cards and infrastructure providers share a two-column row. */
+.card{display:flex;align-items:flex-start;gap:14px;padding:12px 15px;
+  border-top:1px solid var(--edge-soft);cursor:pointer}
+.card:first-child{border-top:0}
+.card:hover{background:var(--panel-hi)}
+.card .body{flex:1;min-width:0}
+.card .t{font-size:var(--fs-body);color:var(--text)}
+.card .d{margin-top:3px;font-size:var(--fs-micro);color:var(--faint)}
+.card .right{text-align:right}
+.card .use{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-body);color:var(--text)}
+.card .of,.card .to,.card .after{margin-top:2px;font-size:var(--fs-micro);color:var(--faint)}
+.card .after{color:var(--cyan)}
+.card.inactive .t{opacity:.45}
+.card.readonly{cursor:default}
+.card.readonly:hover{background:var(--panel)}
+
+.dot{flex:none;width:7px;height:7px;margin-top:6px;border-radius:50%;
+  background:var(--ok);box-shadow:0 0 7px currentColor;color:var(--ok)}
+.dot.off{background:var(--faint);box-shadow:none;color:transparent}
+
+.pill{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:var(--r-sm);
+  font-size:var(--fs-micro);letter-spacing:var(--ls-micro);vertical-align:1px}
+.pill.gold{background:var(--gold-dim);color:var(--gold)}
+.pill.ok{background:rgba(80,220,160,.15);color:var(--ok)}
+.pill.warn{background:rgba(230,180,70,.16);color:var(--warn)}
+
+.banner{display:flex;gap:9px;align-items:flex-start;margin-bottom:14px;
+  padding:10px 13px;border-radius:var(--r-md);font-size:var(--fs-meta);
+  background:rgba(230,180,70,.1);border:1px solid rgba(230,180,70,.28);color:var(--warn)}
+
+/* Debt payoff: the four headline figures, then the first month's split. */
+.debtHead{display:flex;flex-wrap:wrap;gap:26px;padding:14px 15px}
+.debtHead div{min-width:118px}
+.debtHead dt{margin:0 0 5px;font-size:var(--fs-micro);letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--faint)}
+.debtHead dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-body);color:var(--text)}
+.debtHead dd.ok{color:var(--ok)}
+.alloc{display:flex;justify-content:space-between;gap:16px;padding:8px 15px;
+  border-top:1px solid var(--edge-soft);font-size:var(--fs-meta)}
+.alloc span:first-child{color:var(--muted)}
+.alloc span:last-child{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  color:var(--text)}
+
+#strategy{flex:none}
+
+/* ---------- editor sheet ---------- */
+.grid2{display:grid;gap:12px;grid-template-columns:1fr 1fr}
+.grid2 .full{grid-column:1 / -1}
+.sheetErr{margin:0 0 12px;padding:9px 11px;border-radius:var(--r-sm);
+  background:rgba(255,90,80,.12);border:1px solid rgba(255,90,80,.3);
+  color:var(--err);font-size:var(--fs-meta)}
+.sheetErr[hidden]{display:none}
+.sheetFoot{display:flex;align-items:center;gap:8px;margin-top:18px}
+.sheetFoot .spacer{flex:1}
+
+/* ---------- invoice import ---------- */
+.importHead{display:flex;justify-content:space-between;align-items:baseline;
+  gap:16px;margin-bottom:9px;font-size:var(--fs-micro);color:var(--faint)}
+.importHead span:last-child{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-body);font-weight:600;color:var(--text)}
+.importRows{max-height:320px;overflow-y:auto;border:1px solid var(--edge-soft);
+  border-radius:var(--r-md);background:var(--panel)}
+.importRow{display:flex;align-items:center;gap:11px;padding:9px 13px;
+  border-top:1px solid var(--edge-soft);cursor:pointer}
+.importRow:first-child{border-top:0}
+.importRow:hover{background:var(--panel-hi)}
+.importRow .body{flex:1;min-width:0;display:block}
+.importRow .t{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:var(--fs-body);color:var(--text)}
+.importRow .d{display:block;margin-top:2px;font-size:var(--fs-micro);color:var(--faint)}
+.importRow .warn{color:var(--warn)}
+.importRow .amt{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-body);color:var(--text)}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header class="atlas-toolbar bar">
+    <div class="atlas-toolbar__id">
+      <span class="atlas-toolbar__title">Finances</span>
+      <span class="atlas-toolbar__context" id="context"></span>
+    </div>
+    <div class="atlas-seg" id="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="plan" aria-selected="true">Plan</button>
+      <button type="button" role="tab" data-tab="in" aria-selected="false">Money in</button>
+      <button type="button" role="tab" data-tab="out" aria-selected="false">Money out</button>
+    </div>
+    <span class="spacer" style="flex:1"></span>
+    <button type="button" class="atlas-btn" id="planSetup">Planning setup</button>
+    <button type="button" class="atlas-btn" id="addAccount">Add account</button>
+    <button type="button" class="atlas-btn" id="importInvoices">Import invoices</button>
+    <button type="button" class="atlas-btn atlas-btn--ghost" id="syncDates"
+            title="Writes a reminder and an all-day event per due date, into lists named ATLAS Bills">Sync due dates</button>
+    <button type="button" class="atlas-btn" id="addExpense">Add expense</button>
+    <button type="button" class="atlas-btn atlas-btn--primary" id="addSub">Add subscription</button>
+  </header>
+
+  <!-- Plan -->
+  <div class="scroll" id="pane-plan">
+    <dl class="tiles" id="planTiles"></dl>
+
+    <section class="section">
+      <div class="sectionHead"><h2>Next actions</h2></div>
+      <div id="planActions"></div>
+    </section>
+
+    <section class="section">
+      <div class="sectionHead">
+        <h2>Cash-flow forecast</h2><span class="count">next 30 days</span>
+      </div>
+      <div id="planForecast"></div>
+      <p class="caveat" id="forecastCaveat" hidden>Forecast uses only the cash,
+        recurring income, bills, planned expenses, and card payments recorded in
+        ATLAS. The Foxtrot Stripe snapshot is excluded because its time window
+        may differ.</p>
+    </section>
+
+    <section class="section">
+      <div class="sectionHead">
+        <h2>Credit</h2><span class="count" id="creditCount"></span>
+      </div>
+      <div id="planCredit"></div>
+      <p class="caveat" id="creditCaveat" hidden>Utilization can influence credit
+        scores, but ATLAS cannot predict a point change. Scores vary by bureau,
+        model, and the rest of your credit report.</p>
+    </section>
+
+    <section class="section">
+      <div class="sectionHead">
+        <h2>Debt payoff</h2>
+        <div class="atlas-seg" id="strategy"></div>
+      </div>
+      <div id="planDebt"></div>
+      <p class="caveat" id="debtCaveat" hidden>Payoff results assume the entered
+        APRs stay fixed, no new charges are added, and the same budget is paid
+        every month.</p>
+    </section>
+  </div>
+
+  <!-- Money in -->
+  <div class="scroll" id="pane-in" hidden>
+    <div id="inBanners"></div>
+    <dl class="tiles" id="inTiles"></dl>
+
+    <section class="section" id="inAttentionSection" hidden>
+      <div class="sectionHead"><h2>Needs attention</h2></div>
+      <div id="inAttention"></div>
+    </section>
+
+    <section class="section" id="inInfraSection" hidden>
+      <div class="sectionHead">
+        <h2>Infrastructure</h2><span class="count" id="infraTotal"></span>
+      </div>
+      <div id="inInfra"></div>
+    </section>
+
+    <section class="section" id="inStripeSection" hidden>
+      <div class="sectionHead"><h2>Stripe</h2></div>
+      <div id="inStripe"></div>
+    </section>
+
+    <section class="section" id="inUnwiredSection" hidden>
+      <div class="sectionHead"><h2>Not wired</h2></div>
+      <div id="inUnwired"></div>
+      <p class="caveat" id="provenance"></p>
+    </section>
+  </div>
+
+  <!-- Money out -->
+  <div class="scroll" id="pane-out" hidden>
+    <dl class="tiles" id="tiles"></dl>
+
+    <section class="section">
+      <div class="sectionHead">
+        <h2>Subscriptions</h2>
+        <span class="count" id="subCount"></span>
+      </div>
+      <div id="subs"></div>
+    </section>
+
+    <section class="section">
+      <div class="sectionHead">
+        <h2>Expenses</h2>
+        <span class="count" id="expCount"></span>
+      </div>
+      <div id="exps"></div>
+    </section>
+
+    <section class="section" id="offersSection" hidden>
+      <div class="sectionHead">
+        <h2>Also paying for these</h2>
+        <span class="count">ATLAS already reads the amounts</span>
+      </div>
+      <div id="offers"></div>
+    </section>
+  </div>
+</div>
+
+<div class="atlas-veil" id="veil" hidden></div>
+<div class="atlas-sheet" id="sheet" hidden role="dialog" aria-modal="true"
+     aria-labelledby="sheetTitle"></div>
+<div class="atlas-toast" id="toast" hidden role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ *
+ * Talking to Swift
+ * ------------------------------------------------------------------ */
+
+/** Posts one allowlisted action. Anything Swift does not recognise is dropped. */
+function send(message) {
+  window.webkit.messageHandlers.atlas.postMessage(JSON.stringify(message));
+}
+
+/* ------------------------------------------------------------------ *
+ * Escaping
+ * ------------------------------------------------------------------ */
+
+/** Every user string reaches the DOM through here or through textContent. */
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/* ------------------------------------------------------------------ *
+ * State
+ * ------------------------------------------------------------------ */
+
+var state = {
+  subscriptions: [],
+  expenses: [],
+  summary: null,
+  month: null,
+  options: { cadences: [], categories: [] },
+  today: ""
+};
+
+/** The row an open editor is editing, so Cancel can leave without a write. */
+var editing = null;
+
+/* ------------------------------------------------------------------ *
+ * Rendering
+ * ------------------------------------------------------------------ */
+
+function render(payload) {
+  state = payload;
+  document.getElementById("context").textContent =
+    payload.month ? payload.month.label : "";
+  renderTiles();
+  renderSubscriptions();
+  renderExpenses();
+  renderOffers();
+  renderPlan();
+  renderMoneyIn();
+  syncToolbar();
+}
+
+function renderOffers() {
+  var offers = state.infraOffers || [];
+  document.getElementById("offersSection").hidden = offers.length === 0;
+  if (!offers.length) { return; }
+
+  document.getElementById("offers").innerHTML = '<div class="list">'
+    + offers.map(function (o) {
+        return '<div class="card readonly">'
+          + '<div class="body"><div class="t">' + esc(o.label) + '</div>'
+          + '<div class="d">' + esc(o.detail) + '</div></div>'
+          + '<div class="right"><div class="use">' + esc(o.amountText) + '</div></div>'
+          + '<button type="button" class="atlas-btn atlas-btn--ghost" data-track="'
+          + esc(o.name) + '">Track</button>'
+          + '</div>';
+      }).join("") + '</div>';
+}
+
+/* Which tab is showing. Only the actions that belong to it are offered. */
+var tab = "plan";
+
+function showTab(next) {
+  tab = next;
+  ["plan", "in", "out"].forEach(function (name) {
+    document.getElementById("pane-" + name).hidden = name !== next;
+  });
+  var buttons = document.querySelectorAll("#tabs button");
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].setAttribute("aria-selected",
+      buttons[i].getAttribute("data-tab") === next ? "true" : "false");
+  }
+  syncToolbar();
+}
+
+function syncToolbar() {
+  document.getElementById("planSetup").hidden = tab !== "plan";
+  document.getElementById("addAccount").hidden = tab !== "plan";
+  document.getElementById("addExpense").hidden = tab !== "out";
+  document.getElementById("addSub").hidden = tab !== "out";
+  document.getElementById("importInvoices").hidden = tab !== "out";
+
+  // Syncing needs calendar access and something to write; without either the
+  // button says so by being disabled rather than failing when pressed.
+  var syncBtn = document.getElementById("syncDates");
+  syncBtn.hidden = tab !== "out";
+  syncBtn.disabled = !state.canSync || !state.subscriptions.length;
+}
+
+function renderTiles() {
+  var s = state.summary, m = state.month;
+  if (!s || !m) { return; }
+
+  var tiles = [
+    {
+      label: "Monthly out",
+      value: money(s.monthlyCommitted),
+      sub: s.futureMonthly !== s.monthlyCommitted
+        ? money(s.futureMonthly) + " once scheduled changes land"
+        : s.activeSubscriptions + " active",
+      tone: s.futureMonthly > s.monthlyCommitted ? "warn" : ""
+    },
+    {
+      label: "Yearly out",
+      value: money(s.yearlyCommitted),
+      sub: "committed",
+      tone: ""
+    },
+    {
+      label: "Due in 14 days",
+      value: money(s.dueSoonTotal),
+      sub: s.overdueCount > 0
+        ? s.overdueCount + " overdue"
+        : s.dueSoonCount + (s.dueSoonCount === 1 ? " bill" : " bills"),
+      tone: s.overdueCount > 0 ? "err" : ""
+    },
+    {
+      label: m.label,
+      value: money(m.out),
+      sub: money(m.subscriptions) + " bills · " + money(m.expenses) + " one-off",
+      tone: ""
+    }
+  ];
+
+  document.getElementById("tiles").innerHTML = tiles.map(function (t) {
+    return '<div class="tile">'
+      + '<dt>' + esc(t.label) + '</dt>'
+      + '<dd>' + esc(t.value) + '</dd>'
+      + '<div class="sub ' + t.tone + '">' + esc(t.sub) + '</div>'
+      + '</div>';
+  }).join("");
+}
+
+function renderSubscriptions() {
+  var rows = state.subscriptions;
+  document.getElementById("subCount").textContent =
+    rows.length + (rows.length === 1 ? " row" : " rows");
+
+  if (!rows.length) {
+    document.getElementById("subs").innerHTML = empty(
+      "No subscriptions yet",
+      "Add the bills that leave on a schedule and this page will tell you what falls due."
+    );
+    return;
+  }
+
+  document.getElementById("subs").innerHTML =
+    '<div class="rows">' + rows.map(subscriptionRow).join("") + '</div>';
+}
+
+function subscriptionRow(s) {
+  var flags = "";
+  if (s.priceChange) {
+    flags += '<span class="flag ' + (s.priceChange.rose ? "rose" : "fell") + '">'
+      + (s.priceChange.rose ? "↑ " : "↓ ") + esc(s.priceChange.deltaText)
+      + '</span>';
+  }
+  if (s.scheduled && s.scheduled.pending) {
+    flags += '<span class="flag sched">' + esc(s.scheduled.amountText)
+      + " from " + esc(s.scheduled.from) + '</span>';
+  }
+
+  var dueClass = s.daysUntil < 0 ? "over" : (s.dueSoon ? "soon" : "");
+  var dueText = s.daysUntil < 0
+    ? Math.abs(s.daysUntil) + "d overdue"
+    : (s.daysUntil === 0 ? "today" : "in " + s.daysUntil + "d");
+
+  var acts = '<button type="button" class="atlas-iconbtn" data-paid="' + esc(s.id)
+    + '" title="Mark paid">✓</button>';
+  if (s.priceChange) {
+    acts += '<button type="button" class="atlas-iconbtn" data-ack="' + esc(s.id)
+      + '" title="Acknowledge price change">!</button>';
+  }
+  if (s.editable) {
+    acts += '<button type="button" class="atlas-iconbtn" data-editsub="' + esc(s.id)
+      + '" title="Edit">✎</button>';
+  }
+
+  return '<div class="row' + (s.isActive ? "" : " inactive") + '">'
+    + '<div class="who">'
+      + '<span class="name">' + esc(s.name) + flags + '</span>'
+      + '<span class="meta">' + esc(s.categoryLabel)
+        + (s.editable ? "" : " · from the provider") + '</span>'
+    + '</div>'
+    + '<div class="amt">' + esc(s.amountText) + '</div>'
+    + '<div class="cad">' + esc(s.cadenceLabel) + '</div>'
+    + '<div class="due ' + dueClass + '">' + esc(dueText) + '</div>'
+    + '<div class="acts">' + acts + '</div>'
+    + '</div>';
+}
+
+function renderExpenses() {
+  var rows = state.expenses;
+  document.getElementById("expCount").textContent =
+    rows.length + (rows.length === 1 ? " row" : " rows");
+
+  if (!rows.length) {
+    document.getElementById("exps").innerHTML = empty(
+      "No one-off spend recorded",
+      "Charges that are not on a schedule go here."
+    );
+    return;
+  }
+
+  document.getElementById("exps").innerHTML = '<div class="rows">' + rows.map(function (e) {
+    return '<div class="row">'
+      + '<div class="who">'
+        + '<span class="name">' + esc(e.name) + '</span>'
+        + '<span class="meta">' + esc(e.categoryLabel) + '</span>'
+      + '</div>'
+      + '<div class="amt">' + esc(e.amountText) + '</div>'
+      + '<div class="cad"></div>'
+      + '<div class="due">' + esc(e.spentOn) + '</div>'
+      + '<div class="acts">'
+        + '<button type="button" class="atlas-iconbtn" data-editexp="' + esc(e.id)
+        + '" title="Edit">✎</button>'
+      + '</div>'
+      + '</div>';
+  }).join("") + '</div>';
+}
+
+function empty(title, body) {
+  return '<div class="atlas-empty atlas-empty--inline">'
+    + '<div class="atlas-empty__title">' + esc(title) + '</div>'
+    + '<div class="atlas-empty__body">' + esc(body) + '</div>'
+    + '</div>';
+}
+
+/* ------------------------------------------------------------------ *
+ * Plan
+ * ------------------------------------------------------------------ */
+
+function renderPlan() {
+  var p = state.plan;
+  if (!p) { return; }
+
+  var f = p.forecast, c = p.credit;
+  document.getElementById("planTiles").innerHTML = [
+    tile("Available cash", p.profile.openingCashText, "entered balance", ""),
+    tile("Due next 30 days", f.outText, "tracked obligations", f.hasShortfall ? "err" : ""),
+    tile("Safe to spend", f.safeToSpendText, "after your buffer",
+         f.safeToSpend === 0 ? "warn" : "ok"),
+    tile("Credit utilization", c.utilization,
+         c.accounts.length ? "→ " + c.projectedUtilization + " after planned payments"
+                           : "no accounts",
+         utilizationTone(c.utilization))
+  ].join("");
+
+  renderPlanActions(p.actions);
+  renderForecast(p);
+  renderCredit(p.credit);
+  renderDebt(p.debt);
+}
+
+/** Red past 30%, amber past 10%, otherwise unstyled. Mirrors the SwiftUI rule. */
+function utilizationTone(text) {
+  var value = parseFloat(text);
+  if (isNaN(value)) { return ""; }
+  if (value >= 30) { return "err"; }
+  if (value >= 10) { return "warn"; }
+  return "ok";
+}
+
+function tile(label, value, sub, tone) {
+  return '<div class="tile"><dt>' + esc(label) + '</dt>'
+    + '<dd>' + esc(value) + '</dd>'
+    + '<div class="sub ' + tone + '">' + esc(sub) + '</div></div>';
+}
+
+function renderPlanActions(actions) {
+  var host = document.getElementById("planActions");
+  if (!actions || !actions.length) {
+    host.innerHTML = empty("Nothing needs doing",
+      "When a payment, a shortfall or a price rise needs attention it appears here.");
+    return;
+  }
+  host.innerHTML = '<div class="list">' + actions.map(function (a) {
+    var right = "";
+    if (a.amountText) { right += '<div class="amt">' + esc(a.amountText) + '</div>'; }
+    if (a.deadline) { right += '<div class="by">' + esc(a.deadline) + '</div>'; }
+    return '<div class="act act--' + esc(a.kind) + '">'
+      + '<div class="body">'
+        + '<div class="t">' + esc(a.title) + '</div>'
+        + '<div class="d">' + esc(a.detail) + '</div>'
+        + '<div class="i">' + esc(a.impact) + '</div>'
+      + '</div>'
+      + (right ? '<div class="right">' + right + '</div>' : "")
+      + '</div>';
+  }).join("") + '</div>';
+}
+
+function renderForecast(p) {
+  var host = document.getElementById("planForecast");
+  var caveat = document.getElementById("forecastCaveat");
+
+  if (!p.profile.isConfigured) {
+    host.innerHTML = empty("Add your starting point",
+      "Enter available cash, recurring monthly income, a debt budget, and the buffer you do not want to spend.");
+    caveat.hidden = true;
+    return;
+  }
+  var f = p.forecast;
+  host.innerHTML = '<dl class="kv">'
+    + line("Money in", f.incomeText, "ok")
+    + line("Money out", f.outText, "")
+    + line("Ending balance", f.endingText, f.ending >= 0 ? "" : "err")
+    + '<div><dt>Lowest projected balance'
+      + '<span class="sub">' + esc(f.lowestOn) + '</span></dt>'
+      + '<dd class="' + (f.hasShortfall ? "err" : "") + '">' + esc(f.lowestText) + '</dd></div>'
+    + '</dl>';
+  caveat.hidden = false;
+}
+
+function line(label, value, tone) {
+  return '<div><dt>' + esc(label) + '</dt>'
+    + '<dd class="' + tone + '">' + esc(value) + '</dd></div>';
+}
+
+function renderCredit(c) {
+  var host = document.getElementById("planCredit");
+  var caveat = document.getElementById("creditCaveat");
+  document.getElementById("creditCount").textContent =
+    c.accounts.length ? c.accounts.length + " accounts" : "";
+
+  if (!c.accounts.length) {
+    host.innerHTML = empty("Add a credit account",
+      "ATLAS only needs a nickname, balance, limit, APR, and payment dates — never credentials or a card number.");
+    caveat.hidden = true;
+    return;
+  }
+
+  host.innerHTML = '<div class="list">' + c.accounts.map(function (a) {
+    var right = '<div class="use ' + utilizationTone(a.utilization) + '">'
+      + esc(a.utilization) + ' used</div>'
+      + '<div class="of">' + esc(a.balanceText) + ' of ' + esc(a.limitText) + '</div>';
+    if (a.limit > 0) {
+      right += '<div class="to">30%: ' + esc(a.toReach30)
+        + ' · 10%: ' + esc(a.toReach10) + '</div>';
+    }
+    if (a.planned > 0) {
+      right += '<div class="after">→ ' + esc(a.projectedUtilization)
+        + ' after ' + esc(a.plannedText) + '</div>';
+    }
+    return '<div class="card' + (a.isActive ? "" : " inactive")
+      + '" data-editaccount="' + esc(a.id) + '">'
+      + '<div class="body">'
+        + '<div class="t">' + esc(a.name)
+          + (a.autopayEnabled ? '<span class="pill ok">AUTOPAY</span>' : "") + '</div>'
+        + '<div class="d">Due ' + esc(a.paymentDueLabel)
+          + ' · statement closes ' + esc(a.statementClosesLabel) + '</div>'
+      + '</div>'
+      + '<div class="right">' + right + '</div>'
+      + '</div>';
+  }).join("") + '</div>';
+  caveat.hidden = false;
+}
+
+function renderDebt(d) {
+  var host = document.getElementById("planDebt");
+  var caveat = document.getElementById("debtCaveat");
+
+  document.getElementById("strategy").innerHTML =
+    (state.options.strategies || []).map(function (s) {
+      return '<button type="button" data-strategy="' + esc(s.value) + '"'
+        + (s.value === d.strategy ? ' aria-selected="true"' : "")
+        + ">" + esc(s.label) + "</button>";
+    }).join("");
+
+  if (!d.hasDebt) {
+    host.innerHTML = empty("No revolving debt recorded",
+      "Add an account balance to compare payoff strategies.");
+    caveat.hidden = true;
+    return;
+  }
+  if (d.budgetText === "$0.00") {
+    host.innerHTML = empty("Set a monthly debt budget",
+      "ATLAS will protect minimums first, then direct extra money using your chosen strategy.");
+    caveat.hidden = true;
+    return;
+  }
+
+  if (!d.budgetCoversMinimums) {
+    host.innerHTML = '<div class="list"><div class="act act--urgent"><div class="body">'
+      + '<div class="t">Budget is ' + esc(d.shortfallText)
+      + ' short of tracked minimums.</div></div></div></div>';
+    caveat.hidden = false;
+    return;
+  }
+
+  var allocations = (d.allocations || []).map(function (a) {
+    return '<div class="alloc"><span>' + esc(a.name) + '</span>'
+      + '<span>' + esc(a.amountText) + '</span></div>';
+  }).join("");
+
+  host.innerHTML = '<div class="list">'
+    + '<dl class="debtHead">'
+      + '<div><dt>Monthly budget</dt><dd>' + esc(d.budgetText) + '</dd></div>'
+      + '<div><dt>Debt-free estimate</dt><dd>' + esc(payoffLabel(d.payoffMonths)) + '</dd></div>'
+      + '<div><dt>Estimated interest</dt><dd>' + esc(d.interestText) + '</dd></div>'
+      + '<div><dt>Interest avoided</dt><dd class="ok">' + esc(d.interestSavedText) + '</dd></div>'
+    + '</dl>' + allocations + '</div>';
+  caveat.hidden = false;
+}
+
+function payoffLabel(months) {
+  if (months == null) { return "—"; }
+  if (months < 12) { return months + (months === 1 ? " month" : " months"); }
+  var years = Math.floor(months / 12), rest = months % 12;
+  return years + (years === 1 ? " yr" : " yrs") + (rest ? " " + rest + " mo" : "");
+}
+
+/* ------------------------------------------------------------------ *
+ * Money in
+ * ------------------------------------------------------------------ */
+
+function renderMoneyIn() {
+  var m = state.moneyIn;
+  var pane = document.getElementById("pane-in");
+  if (!m) { return; }
+
+  if (!m.configured) {
+    document.getElementById("inBanners").innerHTML = "";
+    document.getElementById("inTiles").innerHTML = "";
+    ["inAttentionSection", "inInfraSection", "inStripeSection", "inUnwiredSection"]
+      .forEach(function (id) { document.getElementById(id).hidden = true; });
+    pane.querySelector("#inBanners").innerHTML = empty("No snapshot yet",
+      "Foxtrot has not written finance/sanitised.json. Run the sanitiser in the foxtrot profile to populate this page.");
+    return;
+  }
+
+  var t = m.totals;
+
+  // Test figures are never presented as revenue, and a fetch that stopped early
+  // is labelled a floor rather than a total.
+  var banners = "";
+  if (!m.isLive) {
+    banners += banner("Test mode. These are not real earnings — nothing below is revenue.");
+  }
+  if (!m.complete) {
+    banners += banner("Fetch stopped at its page ceiling. Every total below is a floor, not a total.");
+  }
+  if (m.isStale) {
+    banners += banner("This snapshot is over a day old. Read " + m.generatedAt + ".");
+  }
+  document.getElementById("inBanners").innerHTML = banners;
+
+  document.getElementById("inTiles").innerHTML = [
+    tile("Net", t.netText, "after refunds", ""),
+    tile("Gross", t.grossText, t.paidCount + " paid", "ok"),
+    tile("Subscriptions", String(t.activeSubscriptions), "active", "")
+  ].join("");
+
+  renderAttention(t);
+  renderInfra(m.infra);
+
+  document.getElementById("inStripeSection").hidden = false;
+  document.getElementById("inStripe").innerHTML = '<dl class="kv">'
+    + line("Charges read", String(t.chargesSeen), "")
+    + line("Paid", String(t.paidCount), "")
+    + line("Refunded", t.refundedText, "")
+    + line("Payouts", String(t.payoutCount), "")
+    + line("Disputed charges", String(t.disputedCount), "")
+    + '</dl>';
+
+  // Absent is not zero: anything the key cannot see is named rather than
+  // silently counted as nothing.
+  document.getElementById("inUnwiredSection").hidden = false;
+  document.getElementById("inUnwired").innerHTML = '<dl class="kv">'
+    + mutedLine("Bank / Plaid", "not connected")
+    + mutedLine("Products & prices", "deliberately not read")
+    + mutedLine("Customers", "deliberately denied")
+    + (m.unavailable || []).map(function (r) {
+        return mutedLine(r, "scope not granted");
+      }).join("")
+    + '</dl>';
+
+  document.getElementById("provenance").textContent =
+    "Read from Foxtrot's sanitised snapshot — numbers and ids only. "
+    + m.droppedTextFields + " free-text fields were stripped before this page saw "
+    + "anything. ATLAS never contacts Stripe.";
+}
+
+function banner(text) {
+  return '<div class="banner">' + esc(text) + '</div>';
+}
+
+function mutedLine(label, value) {
+  return '<div><dt class="muted">' + esc(label) + '</dt>'
+    + '<dd class="muted">' + esc(value) + '</dd></div>';
+}
+
+/** Only the things that cost money if ignored. */
+function renderAttention(t) {
+  var rows = [];
+  if (t.openDisputeCount > 0) {
+    rows.push(["urgent", plural(t.openDisputeCount, "open dispute"),
+               t.openDisputeText + " at risk · on a response clock"]);
+  }
+  if (t.unpaidInvoiceCount > 0) {
+    rows.push(["protect", plural(t.unpaidInvoiceCount, "unpaid invoice"),
+               "money billed but not collected"]);
+  }
+  if (t.failedPaymentCount > 0) {
+    rows.push(["protect", plural(t.failedPaymentCount, "failed payment"),
+               "declined or abandoned"]);
+  }
+
+  document.getElementById("inAttentionSection").hidden = rows.length === 0;
+  if (!rows.length) { return; }
+  document.getElementById("inAttention").innerHTML = '<div class="list">'
+    + rows.map(function (r) {
+        return '<div class="act act--' + r[0] + '"><div class="body">'
+          + '<div class="t">' + esc(r[1]) + '</div>'
+          + '<div class="d">' + esc(r[2]) + '</div></div></div>';
+      }).join("") + '</div>';
+}
+
+function plural(count, noun) {
+  return count + " " + noun + (count === 1 ? "" : "s");
+}
+
+/** Infra spend is partial by nature, so the header says how partial. */
+function renderInfra(infra) {
+  document.getElementById("inInfraSection").hidden = !infra;
+  if (!infra) { return; }
+
+  document.getElementById("infraTotal").textContent = infra.complete
+    ? infra.knownText
+    : infra.knownText + " known · " + infra.providersCounted + " of "
+      + infra.providerTotal + " providers";
+
+  document.getElementById("inInfra").innerHTML = '<div class="list">'
+    + infra.providers.map(function (p) {
+        var right = p.currentText
+          ? '<div class="use">' + esc(p.currentText) + '</div>'
+            + (p.estimatedText ? '<div class="of">' + esc(p.estimatedText) + '</div>' : "")
+          : '<div class="of">no figure</div>';
+        return '<div class="card readonly">'
+          + '<span class="dot' + (p.available ? "" : " off") + '"></span>'
+          + '<div class="body"><div class="t">' + esc(p.name)
+            + (p.plan ? '<span class="pill gold">' + esc(p.plan) + '</span>' : "")
+            + (p.uncapped ? '<span class="pill warn">NO SPEND LIMIT</span>' : "")
+          + '</div>'
+          + (p.note ? '<div class="d">' + esc(p.note) + '</div>' : "")
+          + '</div><div class="right">' + right + '</div></div>';
+      }).join("") + '</div>';
+}
+
+/** Amounts are pre-formatted by Swift; this only covers totals sent as integers. */
+function money(minorUnits) {
+  var negative = minorUnits < 0;
+  var digits = String(Math.abs(minorUnits));
+  while (digits.length < 3) { digits = "0" + digits; }
+  var whole = digits.slice(0, -2), cents = digits.slice(-2);
+  whole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return (negative ? "-$" : "$") + whole + "." + cents;
+}
+
+/* ------------------------------------------------------------------ *
+ * Editors
+ * ------------------------------------------------------------------ */
+
+function optionList(items, selected) {
+  return items.map(function (o) {
+    return '<option value="' + esc(o.value) + '"'
+      + (o.value === selected ? " selected" : "") + ">" + esc(o.label) + "</option>";
+  }).join("");
+}
+
+function openSubscriptionEditor(record) {
+  editing = { kind: "subscription", id: record ? record.id : "" };
+  var s = record || {
+    name: "", amountText: "", cadence: "monthly", nextDueOn: state.today,
+    category: "software", notes: "", isActive: true
+  };
+  // The editor works in plain text: an amount goes out exactly as typed so
+  // Money.minorUnits does the one conversion, and the stored value is shown
+  // without its currency symbol so it round-trips unchanged.
+  var amount = record ? plain(record.amountText) : "";
+  var scheduledAmount = record && record.scheduled ? plain(record.scheduled.amountText) : "";
+  var scheduledFrom = record && record.scheduled ? record.scheduled.from : "";
+
+  showSheet(record ? "Edit subscription" : "New subscription",
+    '<div class="grid2">'
+    + field("Name", '<input class="atlas-input" id="f-name" value="' + esc(s.name) + '" autofocus>', true)
+    + field("Amount", '<input class="atlas-input" id="f-amount" inputmode="decimal" value="' + esc(amount) + '">')
+    + field("Cadence", '<select class="atlas-input" id="f-cadence">'
+        + optionList(state.options.cadences, s.cadence) + '</select>')
+    + field("Next due", '<input class="atlas-input" id="f-due" type="date" value="' + esc(s.nextDueOn) + '">')
+    + field("Category", '<select class="atlas-input" id="f-category">'
+        + optionList(state.options.categories, s.category) + '</select>')
+    + field("Scheduled amount", '<input class="atlas-input" id="f-schedAmount" inputmode="decimal" value="'
+        + esc(scheduledAmount) + '" placeholder="optional">')
+    + field("Scheduled from", '<input class="atlas-input" id="f-schedFrom" type="date" value="'
+        + esc(scheduledFrom) + '">')
+    + field("Notes", '<input class="atlas-input" id="f-notes" value="' + esc(s.notes) + '">', true)
+    + field("", '<label class="atlas-tap"><input type="checkbox" id="f-active"'
+        + (s.isActive ? " checked" : "") + '> Active</label>', true)
+    + '</div>',
+    record ? record.id : null);
+}
+
+function openExpenseEditor(record) {
+  editing = { kind: "expense", id: record ? record.id : "" };
+  var e = record || {
+    name: "", amountText: "", category: "other", spentOn: state.today, notes: ""
+  };
+  var amount = record ? plain(record.amountText) : "";
+
+  showSheet(record ? "Edit expense" : "New expense",
+    '<div class="grid2">'
+    + field("Name", '<input class="atlas-input" id="f-name" value="' + esc(e.name) + '" autofocus>', true)
+    + field("Amount", '<input class="atlas-input" id="f-amount" inputmode="decimal" value="' + esc(amount) + '">')
+    + field("Spent on", '<input class="atlas-input" id="f-spent" type="date" value="' + esc(e.spentOn) + '">')
+    + field("Category", '<select class="atlas-input" id="f-category">'
+        + optionList(state.options.categories, e.category) + '</select>')
+    + field("Notes", '<input class="atlas-input" id="f-notes" value="' + esc(e.notes) + '">', true)
+    + '</div>',
+    record ? record.id : null);
+}
+
+function openCreditAccountEditor(record) {
+  editing = { kind: "creditAccount", id: record ? record.id : "" };
+  var a = record || {
+    name: "", balanceInput: "", limitInput: "", aprInput: "",
+    minimumInput: "", plannedInput: "", paymentDueOn: state.today,
+    statementClosesOn: state.today, openedOn: state.today,
+    autopayEnabled: false, isActive: true, notes: ""
+  };
+
+  showSheet(record ? "Credit account" : "New credit account",
+    '<p class="atlas-field__hint full">Use a nickname only. ATLAS never needs the '
+    + 'card number or login.</p>'
+    + '<div class="grid2">'
+    + field("Account nickname", '<input class="atlas-input" id="f-name" value="'
+        + esc(a.name) + '" autofocus>', true)
+    + field("Balance", '<input class="atlas-input" id="f-balance" inputmode="decimal" value="'
+        + esc(a.balanceInput) + '" placeholder="0.00">')
+    + field("Credit limit", '<input class="atlas-input" id="f-limit" inputmode="decimal" value="'
+        + esc(a.limitInput) + '" placeholder="0.00">')
+    + field("APR %", '<input class="atlas-input" id="f-apr" inputmode="decimal" value="'
+        + esc(a.aprInput) + '" placeholder="0.00">')
+    + field("Minimum payment", '<input class="atlas-input" id="f-minimum" inputmode="decimal" value="'
+        + esc(a.minimumInput) + '" placeholder="0.00">')
+    + field("Planned payment", '<input class="atlas-input" id="f-planned" inputmode="decimal" value="'
+        + esc(a.plannedInput) + '" placeholder="0.00">')
+    + field("Payment due", '<input class="atlas-input" id="f-due" type="date" value="'
+        + esc(a.paymentDueOn) + '">')
+    + field("Statement closes", '<input class="atlas-input" id="f-closes" type="date" value="'
+        + esc(a.statementClosesOn) + '">')
+    + field("Opened", '<input class="atlas-input" id="f-opened" type="date" value="'
+        + esc(a.openedOn) + '">')
+    + field("Notes", '<input class="atlas-input" id="f-notes" value="' + esc(a.notes) + '">', true)
+    + field("", '<label class="atlas-tap"><input type="checkbox" id="f-autopay"'
+        + (a.autopayEnabled ? " checked" : "") + '> Autopay is enabled</label>', true)
+    + field("", '<label class="atlas-tap"><input type="checkbox" id="f-active"'
+        + (a.isActive ? " checked" : "") + '> Active account</label>', true)
+    + '</div>',
+    null);
+}
+
+function openProfileEditor() {
+  editing = { kind: "profile", id: "" };
+  var p = state.plan ? state.plan.profile : null;
+  var input = function (minor, text) {
+    // The editor round-trips the plain number, never the formatted string.
+    return minor === 0 ? "" : String(text).replace(/[$,]/g, "");
+  };
+
+  showSheet("Planning setup",
+    '<p class="atlas-field__hint full">These are manual planning assumptions '
+    + 'stored only in ATLAS’s encrypted finance database.</p>'
+    + '<div class="grid2">'
+    + field("Cash available now", '<input class="atlas-input" id="f-cash" inputmode="decimal" value="'
+        + esc(p ? input(p.openingCash, p.openingCashText) : "") + '" placeholder="0.00" autofocus>')
+    + field("Recurring monthly income", '<input class="atlas-input" id="f-income" inputmode="decimal" value="'
+        + esc(p ? input(p.recurringIncome, p.recurringIncomeText) : "") + '" placeholder="0.00">')
+    + field("Next income date", '<input class="atlas-input" id="f-nextIncome" type="date" value="'
+        + esc(p ? p.nextIncomeOn : state.today) + '">')
+    + field("Monthly debt-payment budget", '<input class="atlas-input" id="f-debtBudget" inputmode="decimal" value="'
+        + esc(p ? input(p.monthlyDebtBudget, p.monthlyDebtBudgetText) : "") + '" placeholder="0.00">')
+    + field("Cash buffer to protect", '<input class="atlas-input" id="f-buffer" inputmode="decimal" value="'
+        + esc(p ? input(p.buffer, p.bufferText) : "") + '" placeholder="0.00">', true)
+    + '</div>',
+    null);
+}
+
+/** Step one: paste. Nothing is stored until the parsed rows have been looked at. */
+function openImportEditor() {
+  editing = { kind: "importPaste", id: "" };
+  showSheet("Import invoices",
+    '<p class="atlas-field__hint full">Copy the billing history from Vercel, Stripe, '
+    + 'anywhere — and paste it. Nothing is saved until you have looked at what it found.</p>'
+    + '<textarea class="atlas-input" id="f-pasted" rows="10" autofocus '
+    + 'style="width:100%;font-family:var(--mono);font-size:var(--fs-meta);resize:vertical">'
+    + '</textarea>',
+    null, "Find charges");
+}
+
+/** Step two: review what was found and choose what to keep. */
+function showImportReview(candidates) {
+  editing = { kind: "importConfirm", id: "" };
+
+  if (!candidates.length) {
+    showSheet("Import invoices",
+      '<p class="sheetErr" style="display:block">Nothing in that looked like a charge. '
+      + 'A line needs both an amount and a date to be imported.</p>', null, null);
+    return;
+  }
+
+  showSheet("Import invoices",
+    '<div class="importHead"><span id="importCount"></span>'
+    + '<span id="importTotal"></span></div>'
+    + '<div class="importRows">' + candidates.map(function (c) {
+        return '<label class="importRow">'
+          + '<input type="checkbox" data-candidate="' + esc(c.id) + '"'
+          + (c.include ? " checked" : "") + '>'
+          + '<span class="body"><span class="t">' + esc(c.description) + '</span>'
+          + '<span class="d">' + esc(c.date)
+          + (c.warning ? ' · <span class="warn">' + esc(c.warning) + '</span>' : "")
+          + '</span></span>'
+          + '<span class="amt" data-amount="' + esc(c.amountText) + '">'
+          + esc(c.amountText) + '</span></label>';
+      }).join("") + '</div>',
+    null, "Import selected");
+
+  updateImportTotal();
+}
+
+/** Recomputed from the checked rows, so the total always matches what will import. */
+function updateImportTotal() {
+  var boxes = document.querySelectorAll("[data-candidate]");
+  var checked = 0, cents = 0;
+  for (var i = 0; i < boxes.length; i++) {
+    if (!boxes[i].checked) { continue; }
+    checked++;
+    // The amount is read back from the text Swift formatted rather than
+    // recomputed, so nothing here does money arithmetic on a float.
+    var text = boxes[i].closest(".importRow").querySelector(".amt")
+      .getAttribute("data-amount");
+    cents += minorUnits(text);
+  }
+  document.getElementById("importCount").textContent =
+    checked + " of " + boxes.length + " selected";
+  document.getElementById("importTotal").textContent = money(cents);
+}
+
+/** "$21.28" -> 2128, by digits. The inverse of money(), never via parseFloat. */
+function minorUnits(formatted) {
+  var digits = String(formatted).replace(/[^0-9]/g, "");
+  return digits ? parseInt(digits, 10) : 0;
+}
+
+function field(label, control, full) {
+  return '<div class="atlas-field' + (full ? " full" : "") + '">'
+    + (label ? '<label class="atlas-label">' + esc(label) + '</label>' : "")
+    + control + '</div>';
+}
+
+/** "$21.28" -> "21.28", so what goes back out is what Money.minorUnits accepts. */
+function plain(formatted) {
+  return String(formatted || "").replace(/[$,]/g, "");
+}
+
+/** `saveLabel` of null means the sheet has nothing to submit — Close only. */
+function showSheet(title, body, deletableId, saveLabel) {
+  var sheet = document.getElementById("sheet");
+  var save = saveLabel === undefined ? "Save" : saveLabel;
+  sheet.innerHTML =
+    '<h3 class="atlas-sheet__title" id="sheetTitle">' + esc(title) + '</h3>'
+    + '<p class="sheetErr" id="sheetErr" hidden></p>'
+    + body
+    + '<div class="sheetFoot">'
+      + (deletableId
+          ? '<button type="button" class="atlas-btn atlas-btn--danger" id="sheetDelete">Delete</button>'
+          : "")
+      + '<span class="spacer"></span>'
+      + '<button type="button" class="atlas-btn atlas-btn--ghost" id="sheetCancel">'
+        + (save === null ? "Close" : "Cancel") + '</button>'
+      + (save === null ? ""
+          : '<button type="button" class="atlas-btn atlas-btn--primary" id="sheetSave">'
+            + esc(save) + '</button>')
+    + '</div>';
+  sheet.hidden = false;
+  document.getElementById("veil").hidden = false;
+
+  var first = sheet.querySelector("input,select");
+  if (first) { first.focus(); }
+}
+
+function closeSheet() {
+  editing = null;
+  document.getElementById("sheet").hidden = true;
+  document.getElementById("veil").hidden = true;
+}
+
+function submitSheet() {
+  if (!editing) { return; }
+  var value = function (id) {
+    var el = document.getElementById(id);
+    return el ? el.value : "";
+  };
+
+  var checked = function (id) {
+    var el = document.getElementById(id);
+    return el ? el.checked : false;
+  };
+
+  if (editing.kind === "subscription") {
+    send({
+      action: "saveSubscription",
+      id: editing.id,
+      name: value("f-name"),
+      amount: value("f-amount"),
+      cadence: value("f-cadence"),
+      nextDueOn: value("f-due"),
+      category: value("f-category"),
+      notes: value("f-notes"),
+      isActive: checked("f-active"),
+      scheduledAmount: value("f-schedAmount"),
+      scheduledFrom: value("f-schedFrom")
+    });
+  } else if (editing.kind === "expense") {
+    send({
+      action: "saveExpense",
+      id: editing.id,
+      name: value("f-name"),
+      amount: value("f-amount"),
+      spentOn: value("f-spent"),
+      category: value("f-category"),
+      notes: value("f-notes")
+    });
+  } else if (editing.kind === "creditAccount") {
+    send({
+      action: "saveCreditAccount",
+      id: editing.id,
+      name: value("f-name"),
+      balance: value("f-balance"),
+      limit: value("f-limit"),
+      apr: value("f-apr"),
+      minimum: value("f-minimum"),
+      planned: value("f-planned"),
+      paymentDueOn: value("f-due"),
+      statementClosesOn: value("f-closes"),
+      openedOn: value("f-opened"),
+      autopayEnabled: checked("f-autopay"),
+      isActive: checked("f-active"),
+      notes: value("f-notes")
+    });
+  } else if (editing.kind === "profile") {
+    send({
+      action: "saveProfile",
+      openingCash: value("f-cash"),
+      recurringIncome: value("f-income"),
+      nextIncomeOn: value("f-nextIncome"),
+      monthlyDebtBudget: value("f-debtBudget"),
+      buffer: value("f-buffer")
+    });
+  } else if (editing.kind === "importPaste") {
+    send({ action: "parseInvoices", pasted: value("f-pasted") });
+  } else if (editing.kind === "importConfirm") {
+    var boxes = document.querySelectorAll("[data-candidate]");
+    var include = [];
+    for (var i = 0; i < boxes.length; i++) {
+      if (boxes[i].checked) { include.push(boxes[i].getAttribute("data-candidate")); }
+    }
+    send({ action: "importInvoices", include: include });
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Events
+ * ------------------------------------------------------------------ */
+
+document.addEventListener("click", function (event) {
+  // Credit rows are the only clickable non-button, so they are matched first.
+  var card = event.target.closest("[data-editaccount]");
+  if (card) {
+    return openCreditAccountEditor(find(state.plan.credit.accounts,
+                                        card.getAttribute("data-editaccount")));
+  }
+
+  var el = event.target.closest("button");
+  if (!el) { return; }
+
+  var name = el.getAttribute("data-tab");
+  if (name) { return showTab(name); }
+
+  var strategy = el.getAttribute("data-strategy");
+  if (strategy) { return send({ action: "setStrategy", strategy: strategy }); }
+
+  var track = el.getAttribute("data-track");
+  if (track) { return send({ action: "trackProvider", provider: track }); }
+
+  if (el.id === "addSub") { return openSubscriptionEditor(null); }
+  if (el.id === "addExpense") { return openExpenseEditor(null); }
+  if (el.id === "addAccount") { return openCreditAccountEditor(null); }
+  if (el.id === "planSetup") { return openProfileEditor(); }
+  if (el.id === "importInvoices") { return openImportEditor(); }
+  if (el.id === "syncDates") { return send({ action: "syncCalendar" }); }
+  if (el.id === "sheetCancel") { return closeSheet(); }
+  if (el.id === "sheetSave") { return submitSheet(); }
+
+  if (el.id === "sheetDelete") {
+    if (!editing || !editing.id) { return; }
+    send({
+      action: editing.kind === "subscription" ? "deleteSubscription" : "deleteExpense",
+      id: editing.id
+    });
+    return;
+  }
+
+  var id;
+  if ((id = el.getAttribute("data-paid"))) { return send({ action: "markPaid", id: id }); }
+  if ((id = el.getAttribute("data-ack"))) { return send({ action: "acknowledgePrice", id: id }); }
+  if ((id = el.getAttribute("data-editsub"))) {
+    return openSubscriptionEditor(find(state.subscriptions, id));
+  }
+  if ((id = el.getAttribute("data-editexp"))) {
+    return openExpenseEditor(find(state.expenses, id));
+  }
+});
+
+/* Ticking a charge changes what will import, so the total follows immediately. */
+document.addEventListener("change", function (event) {
+  if (event.target.hasAttribute("data-candidate")) { updateImportTotal(); }
+});
+
+document.addEventListener("keydown", function (event) {
+  if (document.getElementById("sheet").hidden) { return; }
+  if (event.key === "Escape") { closeSheet(); }
+  // Enter submits from any single-line field, but not from a select being
+  // navigated by keyboard, and not from the paste box where it is a newline.
+  if (event.key === "Enter" && event.target.tagName === "INPUT") { submitSheet(); }
+});
+
+function find(rows, id) {
+  for (var i = 0; i < rows.length; i++) { if (rows[i].id === id) { return rows[i]; } }
+  return null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Called by Swift
+ * ------------------------------------------------------------------ */
+
+var toastTimer = null;
+
+/* Each of these takes the payload as a JSON string, the same as the other ATLAS
+   pages: Swift hands it over as an argument to callAsyncJavaScript rather than
+   splicing it into the script text, so nothing here has to be escaped for JS. */
+window.atlasFinances = {
+  render: function (json) {
+    try {
+      render(JSON.parse(json));
+    } catch (e) {
+      toast("Could not read the finances data.");
+    }
+  },
+
+  /** A write landed: close the editor and say so. The refreshed rows follow. */
+  saved: function (json) {
+    var payload = parse(json);
+    closeSheet();
+    toast(payload && payload.message ? payload.message : "Saved");
+  },
+
+  /** What a paste parsed into. Nothing is stored yet. */
+  invoices: function (json) {
+    var payload = parse(json);
+    showImportReview(payload && payload.candidates ? payload.candidates : []);
+  },
+
+  /** Progress that is not a write: a sync result, a provider price change. */
+  note: function (json) {
+    var payload = parse(json);
+    if (payload && payload.message) { toast(payload.message); }
+  },
+
+  /** A write was refused. The editor stays open with the reason on it, so the
+      typed values are still there to correct rather than retyped. */
+  error: function (json) {
+    var payload = parse(json);
+    var message = payload && payload.message ? payload.message : "Something went wrong";
+    var box = document.getElementById("sheetErr");
+    if (box && !document.getElementById("sheet").hidden) {
+      box.textContent = message;
+      box.hidden = false;
+      return;
+    }
+    toast(message);
+  }
+};
+
+function parse(json) {
+  try { return JSON.parse(json); } catch (e) { return null; }
+}
+
+function toast(message) {
+  var el = document.getElementById("toast");
+  el.textContent = message;
+  el.hidden = false;
+  if (toastTimer) { clearTimeout(toastTimer); }
+  toastTimer = setTimeout(function () { el.hidden = true; }, 2600);
+}
+
+send({ action: "load" });
+</script>
+</body>
+</html>

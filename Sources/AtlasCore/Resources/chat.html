@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Assistant transcript renderer.
+
+  This page displays text written by a language model, including uncensored
+  ones. That text is untrusted input, so two things hold the line:
+
+    1. Every model byte goes through escapeHtml before it can reach innerHTML.
+       The renderer itself is markdown.js, shared with the canvas page; tests
+       live in Tests/chat_render_test.js — run them after any edit to either.
+    2. The CSP below denies every network destination. Even if an escape were
+       missed, the injected code has nowhere to send anything.
+
+  The renderer (markdown.js, shared with the canvas) is injected by the host as
+  a user script, not fetched — so this page loads no files at all. The host must
+  NOT enable allowFileAccessFromFileURLs, allowUniversalAccessFromFileURLs, or
+  register a script message handler.
+  HUDView does enable those; it renders only ATLAS's own animation. Copying
+  that configuration here would let model output read local files and call
+  into native code. See AssistantChatWebView.swift.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATLAS Assistant</title>
+<style>
+/* Shared tokens, reset and components arrive from atlas-theme.css /
+   atlas-components.css, injected ahead of this block. */
+:root{
+  /* The transcript, like the HUD, tints its hairlines gold. */
+  --edge-soft: rgba(212, 176, 89, 0.10);
+}
+body{
+  background:
+    radial-gradient(ellipse 90% 70% at 50% 30%, rgba(63,208,255,0.05), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 50% 100%, rgba(212,176,89,0.04), transparent 70%),
+    var(--bg);
+  background-attachment:fixed;
+  font-size:14px;line-height:1.6}
+#log{padding:20px 22px 30px;display:flex;flex-direction:column;gap:16px;
+  max-width:880px;margin:0 auto;min-height:100%}
+
+/* Message panel — same construction as hud.html .panel */
+.msg{position:relative;display:flex;border-radius:var(--r-sm);
+  background:linear-gradient(180deg, rgba(19,23,31,.92), rgba(13,16,22,.92));
+  border:1px solid rgba(255,255,255,.05);
+  box-shadow:0 1px 0 rgba(255,255,255,.035) inset}
+.msg.user{background:linear-gradient(180deg, rgba(16,20,27,.92), rgba(11,14,19,.92))}
+/* Clipped corner brackets — the detail that makes a box read as a HUD. */
+.msg.live::before,.msg.live::after{content:"";position:absolute;width:13px;height:13px;
+  border:1px solid var(--cyan-dim);pointer-events:none}
+.msg.live::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
+.msg.live::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
+/* Page-local: the accent stripe down a message, not a toolbar. The shared
+   toolbar is .atlas-toolbar, so the two never collide. */
+.bar{width:2px;flex:none;background:linear-gradient(180deg,rgba(212,176,89,.35),transparent)}
+.msg.user .bar{background:linear-gradient(180deg,rgba(255,255,255,.14),transparent)}
+.msg.live .bar{background:linear-gradient(180deg,var(--cyan),rgba(63,208,255,.08))}
+.inner{flex:1;min-width:0;padding:14px 18px}
+
+/* Caption row — hud.html .cap */
+.meta{display:flex;gap:10px;align-items:baseline;margin-bottom:9px;
+  font-size:var(--fs-label);font-weight:700;letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--gold-dim)}
+.msg.user .meta{color:var(--cyan-dim)}
+.meta .sub{color:var(--faint);letter-spacing:var(--ls-micro);font-weight:400}
+.plain{white-space:pre-wrap;word-wrap:break-word;color:rgba(255,255,255,.72)}
+.md{word-wrap:break-word;line-height:1.68;color:rgba(255,255,255,.80)}
+.md>:first-child{margin-top:0}
+.md>:last-child{margin-bottom:0}
+.md h1,.md h2,.md h3,.md h4,.md h5,.md h6{font-weight:600;line-height:1.25;
+  color:rgba(255,255,255,.94);margin:1.35em 0 .5em;letter-spacing:var(--ls-tight)}
+.md h1{font-size:1.42rem;border-bottom:1px solid var(--edge-soft);padding-bottom:.32em}
+.md h2{font-size:1.24rem}
+.md h3{font-size:1.09rem;color:var(--gold-dim)}
+.md h4{font-size:1rem;color:var(--gold-dim)}
+.md h5{font-size:.94rem;color:var(--gold-dim)}
+.md h6{font-size:var(--fs-label);font-weight:700;letter-spacing:var(--ls-caps);
+  color:var(--gold-dim);text-transform:uppercase}
+.md p{margin:.7em 0}
+.md strong{color:rgba(255,255,255,.98);font-weight:640}
+.md em{color:rgba(255,255,255,.82)}
+.md a{color:var(--cyan);text-underline-offset:3px;text-decoration-color:var(--cyan-dim)}
+.md a:hover{color:#8fe3ff}
+.md ul,.md ol{margin:.65em 0;padding-left:1.4em}
+.md li{margin:.26em 0}
+.md li::marker{color:var(--gold-dim)}
+.md ul ul,.md ol ol,.md ul ol,.md ol ul{margin:.2em 0}
+.md ul ul li::marker{color:var(--faint)}
+.md blockquote{margin:.9em 0;padding:.15em 0 .15em 1em;border-left:1px solid var(--edge);
+  color:rgba(255,255,255,.7)}
+.md blockquote p{margin:.3em 0}
+.md code{font-family:var(--mono);font-size:12px;color:var(--gold);
+  background:rgba(212,176,89,.08);border:1px solid var(--edge-soft);border-radius:2px;
+  padding:.1em .34em}
+.md pre{position:relative;margin:.95em 0;padding:14px 16px;overflow:auto;
+  background:rgba(0,0,0,.42);border:1px solid var(--edge-soft);border-radius:var(--r-sm)}
+.md pre code{display:block;padding:0;border:0;background:transparent;color:var(--text);
+  white-space:pre;font-size:var(--fs-meta);line-height:1.65}
+.md .code-label{display:block;margin:-2px 0 8px;color:var(--gold-dim);font-family:var(--mono);
+  font-size:var(--fs-micro);font-weight:700;text-transform:uppercase;
+  letter-spacing:var(--ls-caps)}
+.md hr{border:0;border-top:1px solid var(--edge-soft);margin:1.3em 0}
+.md .table-wrap{overflow-x:auto;margin:.95em 0;border:1px solid var(--edge-soft);
+  border-radius:var(--r-sm)}
+.md table{border-collapse:collapse;width:100%;font-size:var(--fs-body)}
+.md th,.md td{padding:8px 13px;text-align:left;border-bottom:1px solid rgba(255,255,255,.05);
+  vertical-align:top}
+.md td{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--fs-meta)}
+.md th{background:rgba(212,176,89,.06);color:var(--gold-dim);font-weight:700;
+  font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:var(--ls-caps);
+  white-space:nowrap}
+.md tbody tr:last-child td{border-bottom:0}
+.md tbody tr:hover{background:rgba(255,255,255,.02)}
+.copy{position:absolute;top:7px;right:7px;color:var(--muted);background:rgba(0,0,0,.5);
+  border:1px solid var(--edge-soft);border-radius:var(--r-sm);cursor:pointer;
+  opacity:0;transition:opacity var(--dur-fast),color var(--dur-fast)}
+.md pre:hover .copy,.copy:focus,.copy:focus-visible{opacity:1}
+.copy:hover{color:var(--gold);border-color:var(--edge)}
+.think{margin:0 0 13px;border:1px solid rgba(63,208,255,.16);
+  background:rgba(63,208,255,.045);border-radius:var(--r-sm)}
+.think summary{cursor:pointer;padding:9px 13px;font-size:var(--fs-label);font-weight:700;
+  letter-spacing:var(--ls-caps);text-transform:uppercase;color:var(--cyan-dim);list-style:none}
+.think summary::-webkit-details-marker{display:none}
+.think summary::before{content:"\25B8  "}
+.think[open] summary::before{content:"\25BE  "}
+.think summary:hover{color:var(--cyan)}
+.think summary{display:flex;align-items:center;gap:8px}
+.think summary .sp{flex:1}
+.thinkCopy{color:var(--muted);background:var(--panel);border:1px solid var(--edge-soft);
+  border-radius:var(--r-sm);cursor:pointer;opacity:0;
+  transition:opacity var(--dur-fast),color var(--dur-fast)}
+.thinkCopy:hover{color:var(--cyan);border-color:var(--cyan-dim)}
+.think:hover .thinkCopy,.thinkCopy:focus,.thinkCopy:focus-visible{opacity:1}
+
+/* Icon-only, so all three copy controls are one square target. 26px keeps them
+   comfortably clickable without crowding the text they sit over. */
+.copy,.msgCopy,.thinkCopy{display:grid;place-items:center;width:26px;height:26px;padding:0;flex:none}
+.copy svg,.msgCopy svg,.thinkCopy svg{width:13px;height:13px;display:block}
+.copy.ok,.msgCopy.ok,.thinkCopy.ok{color:var(--ok);border-color:rgba(52,199,89,.45)}
+.copy.bad,.msgCopy.bad,.thinkCopy.bad{color:var(--err);border-color:rgba(255,59,48,.45)}
+.think .body{padding:2px 14px 12px;color:rgba(255,255,255,.5);font-family:var(--mono);
+  font-size:var(--fs-meta);line-height:1.62;white-space:pre-wrap;max-height:240px;overflow:auto}
+.err{margin-top:10px;color:var(--err);font-size:var(--fs-body);font-family:var(--mono)}
+.files{margin-top:11px;padding-top:10px;border-top:1px solid var(--edge-soft)}
+.files .t{font-size:var(--fs-micro);font-weight:700;letter-spacing:var(--ls-caps);
+  text-transform:uppercase;color:var(--gold-dim);margin-bottom:5px}
+.files .f{font-family:var(--mono);font-size:var(--fs-micro);line-height:1.55;color:var(--muted)}
+.cursor>:last-child::after{content:"\258D";color:var(--cyan);margin-left:2px;
+  animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* The transcript fills the pane, so its empty state centres in it rather than
+   hanging off the top. */
+/* ---------- transcript chrome ---------- */
+/* One sticky cluster: copy the whole exchange, or search inside it. */
+#chrome{position:sticky;top:0;z-index:5;display:flex;justify-content:flex-end;align-items:center;
+  gap:7px;max-width:880px;margin:0 auto;padding:8px 22px 0;pointer-events:none}
+#chrome>*{pointer-events:auto}
+#find{display:flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:999px;
+  background:var(--panel);border:1px solid var(--edge-soft);opacity:0;width:0;padding:0;
+  border-width:0;overflow:hidden;transition:opacity var(--dur-fast)}
+#find.on{opacity:1;width:auto;padding:0 9px;border-width:1px}
+#find input{background:none;border:0;outline:none;color:var(--text);font-size:var(--fs-meta);
+  width:150px}
+#find input::placeholder{color:var(--faint)}
+#findCount{font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);white-space:nowrap}
+.chromeBtn{height:26px;padding:0 11px;border-radius:999px;background:var(--panel);
+  border:1px solid var(--edge-soft);color:var(--muted);font-size:var(--fs-micro);
+  font-weight:700;letter-spacing:var(--ls-caps);text-transform:uppercase;
+  transition:color var(--dur-fast),border-color var(--dur-fast)}
+.chromeBtn:hover{color:var(--gold);border-color:var(--edge)}
+
+/* Per-message copy, revealed on hover like the code-block button. */
+.msgCopy{position:absolute;top:8px;right:10px;color:var(--muted);background:var(--panel);
+  border:1px solid var(--edge-soft);border-radius:var(--r-sm);cursor:pointer;
+  opacity:0;transition:opacity var(--dur-fast),color var(--dur-fast)}
+.msg:hover .msgCopy,.msgCopy:focus,.msgCopy:focus-visible{opacity:1}
+.msgCopy:hover{color:var(--gold);border-color:var(--edge)}
+
+/* Search hits. mark is styled rather than left to the browser's yellow. */
+mark.hit{background:rgba(63,208,255,.28);color:inherit;border-radius:2px}
+mark.hit.current{background:var(--gold);color:#0b0e13}
+
+.empty{flex:1;display:grid;place-items:center}
+
+/* ---------- light mode ----------
+   The shared theme flips its tokens, but the transcript paints its own message
+   panels, prose and code blocks against the dark ground — white-on-transparent
+   text and near-black panels. On cream those are unreadable, so each is
+   restated rather than left to inherit. */
+@media (prefers-color-scheme: light) {
+  :root {
+    /* Hairlines have to be ink, not a white wash. */
+    --edge-soft: rgba(29, 27, 24, .14);
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse 90% 70% at 50% 30%, rgba(23,107,135,.05), transparent 70%),
+      radial-gradient(ellipse 60% 50% at 50% 100%, rgba(29,27,24,.035), transparent 70%),
+      var(--bg);
+  }
+
+  /* Message panels: a raised card on cream rather than a lighter hole. */
+  .msg {
+    background: linear-gradient(180deg, rgba(252,249,243,.98), rgba(248,244,237,.98));
+    border-color: rgba(29, 27, 24, .10);
+    box-shadow: 0 1px 2px rgba(35,36,39,.05);
+  }
+  .msg.user { background: linear-gradient(180deg, rgba(240,236,228,.96), rgba(235,230,221,.96)); }
+  .msg.user .bar { background: linear-gradient(180deg, rgba(29,27,24,.28), transparent); }
+
+  .plain { color: var(--text); }
+  .md { color: var(--text); }
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { color: var(--text); }
+  .md strong { color: var(--text); }
+  .md em { color: var(--muted); }
+  .md blockquote { color: var(--muted); }
+
+  /* Inline code and blocks: ink on a faint tint, not gold on black. */
+  .md code { background: rgba(29,27,24,.06); color: var(--text); }
+  .md pre { background: rgba(29,27,24,.045); }
+  .md pre code { color: var(--text); }
+  .md th { background: rgba(29,27,24,.05); }
+  .md th, .md td { border-bottom-color: rgba(29,27,24,.10); }
+  .md tbody tr:hover { background: rgba(29,27,24,.025); }
+
+  .copy, .msgCopy, .chromeBtn, #find, .thinkCopy { background: rgba(252,249,243,.92); }
+  mark.hit { background: rgba(23,107,135,.22); }
+  mark.hit.current { background: #d9b45a; color: #1d1b18; }
+  .think { background: rgba(23,107,135,.05); border-color: rgba(23,107,135,.20); }
+  .think .body { color: var(--muted); }
+}
+</style>
+</head>
+<body>
+<div id="chrome">
+  <div id="find">
+    <input id="findInput" placeholder="Find in transcript" spellcheck="false"
+           aria-label="Find in transcript">
+    <span id="findCount"></span>
+  </div>
+  <button class="chromeBtn" id="copyAll" type="button" title="Copy the whole exchange as Markdown">Copy all</button>
+</div>
+<div id="log">
+  <div class="empty">
+    <div class="atlas-empty">
+      <div class="atlas-empty__mark">&#9671;</div>
+      <div class="atlas-empty__title">No conversation yet</div>
+      <div class="atlas-empty__body">Your exchange with ATLAS appears here. Replies stream
+        in as they are written, and code blocks can be copied straight out of the
+        transcript.</div>
+    </div>
+  </div>
+</div>
+<script>
+'use strict';
+/* ---------- markdown renderer ----------
+   Ported verbatim from the verified standalone build. Every branch that can
+   emit model text routes through escapeHtml first. Covered by
+   Tests/chat_render_test.js — keep that passing. */
+/* The renderer lives in markdown.js, injected by the host and shared with the
+   canvas page. Read through wrappers rather than captured at parse time: a page
+   that dies on its first line renders nothing at all. */
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g, ch =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function renderMarkdown(text){
+  if (window.atlasMarkdown && window.atlasMarkdown.renderMarkdown){
+    return window.atlasMarkdown.renderMarkdown(text);
+  }
+  return '<p>' + escapeHtml(text || '').replace(/\n/g, '<br>') + '</p>';
+}
+
+/* ---------- transcript ---------- */
+const log=document.getElementById('log');
+const nearBottom=()=>window.innerHeight+window.scrollY>=document.body.scrollHeight-140;
+
+function addCopyButtons(scope){
+  scope.querySelectorAll('pre').forEach(pre=>{
+    if(pre.querySelector('.copy'))return;
+    const b=document.createElement('button');
+    b.className='copy';b.type='button';
+    b.setAttribute('aria-label','Copy this code');b.title='Copy this code';
+    setIcon(b,'copy');
+    b.addEventListener('click',()=>{
+      const code=pre.querySelector('code');
+      writeClipboard(code?code.textContent:'',b,'copy');
+    });
+    pre.appendChild(b);
+  });
+}
+
+/* Builds one message node. Everything model-authored is set with textContent
+   or passed through renderMarkdown; nothing is concatenated into innerHTML raw. */
+function buildMessage(m){
+  const el=document.createElement('div');
+  el.className='msg '+(m.role==='User'?'user':'assistant');
+  el.dataset.id=m.id;
+
+  const bar=document.createElement('div');
+  bar.className='bar';
+
+  const inner=document.createElement('div');
+  inner.className='inner';
+
+  const meta=document.createElement('div');
+  meta.className='meta';
+  const who=document.createElement('span');
+  who.className='who';
+  who.textContent=m.role||'';
+  meta.appendChild(who);
+  if(m.subtitle){
+    const sub=document.createElement('span');
+    sub.className='sub';
+    sub.textContent=m.subtitle;
+    meta.appendChild(sub);
+  }
+  inner.appendChild(meta);
+
+  if(m.role!=='User'){
+    const think=document.createElement('details');
+    think.className='think';
+    think.hidden=!m.reasoning;
+    think.open=true; // Deliberate: reasoning stays visible, not folded away
+    const summary=document.createElement('summary');
+    const label=document.createElement('span');
+    label.textContent='Thinking';
+    const sp=document.createElement('span');
+    sp.className='sp';
+    const thinkCopy=document.createElement('button');
+    thinkCopy.className='thinkCopy';thinkCopy.type='button';
+    thinkCopy.setAttribute('aria-label','Copy the reasoning');
+    thinkCopy.title='Copy the reasoning';
+    setIcon(thinkCopy,'copy');
+    thinkCopy.addEventListener('click',e=>{
+      // Inside a <summary>, so the click has to be stopped from toggling the
+      // disclosure open and shut every time the button is used.
+      e.preventDefault();e.stopPropagation();
+      writeClipboard(el._reasoning||'',thinkCopy,'copy');
+    });
+    summary.appendChild(label);summary.appendChild(sp);summary.appendChild(thinkCopy);
+    const tbody=document.createElement('div');
+    tbody.className='body';
+    tbody.textContent=m.reasoning||'';
+    el._reasoning=m.reasoning||'';
+    think.appendChild(summary);think.appendChild(tbody);
+    inner.appendChild(think);
+    el._think=think;el._tbody=tbody;
+  }
+
+  el._raw=m.text||'';
+  el._role=m.role||'';
+
+  const body=document.createElement('div');
+  if(m.role==='User'){body.className='plain';body.textContent=m.text||''}
+  else{body.className='md';body.innerHTML=renderMarkdown(m.text||'');addCopyButtons(body)}
+  inner.appendChild(body);
+  el._body=body;
+
+  if(m.error){
+    const e=document.createElement('div');
+    e.className='err';
+    e.textContent=m.error;
+    inner.appendChild(e);
+  }
+  if(m.files&&m.files.length){
+    const wrap=document.createElement('div');
+    wrap.className='files';
+    const t=document.createElement('div');
+    t.className='t';
+    t.textContent='Context files shared ('+m.files.length+')';
+    wrap.appendChild(t);
+    m.files.slice(0,5).forEach(f=>{
+      const d=document.createElement('div');
+      d.className='f';
+      d.textContent='• '+f;
+      wrap.appendChild(d);
+    });
+    inner.appendChild(wrap);
+  }
+
+  el.appendChild(bar);el.appendChild(inner);
+  return el;
+}
+
+const nodes=new Map();
+
+function setAll(messages){
+  const stick=nearBottom();
+  log.textContent='';
+  nodes.clear();
+  if(!messages||!messages.length){
+    const e=document.createElement('div');
+    e.className='empty';
+    // Composed rather than a single tracked-out line. Deliberately says nothing
+    // about projects or suggested prompts: this page has no channel back into
+    // the app and is handed no project data, so any starter action here would
+    // be a button that cannot do anything.
+    e.innerHTML='<div class="atlas-empty">' +
+      '<div class="atlas-empty__mark">&#9671;</div>' +
+      '<div class="atlas-empty__title">No conversation yet</div>' +
+      '<div class="atlas-empty__body">Your exchange with ATLAS appears here. Replies stream in as they are written, and code blocks can be copied straight out of the transcript.</div>' +
+    '</div>';
+    log.appendChild(e);
+    return;
+  }
+  messages.forEach(m=>{
+    const el=buildMessage(m);
+    nodes.set(m.id,el);
+    log.appendChild(el);
+    // History is already finished, so every message gets its Copy immediately.
+    if(!m.streaming)addMessageCopy(el);
+  });
+  if(stick)window.scrollTo(0,document.body.scrollHeight);
+}
+
+function update(m){
+  const stick=nearBottom();
+  let el=nodes.get(m.id);
+  if(!el){
+    const empty=log.querySelector('.empty');
+    if(empty)empty.remove();
+    el=buildMessage(m);
+    nodes.set(m.id,el);
+    log.appendChild(el);
+  }
+  el.classList.toggle('live',!!m.streaming);
+  if(el._think){
+    const has=!!m.reasoning;
+    el._think.hidden=!has;
+    if(has){
+      /* Follow the stream only while the reader is already at the bottom. This
+         used to pin unconditionally, so scrolling up to re-read an earlier line
+         was undone by the very next token. Measured before the text is
+         replaced, because that resets the scroll metrics. */
+      const box=el._tbody;
+      const pinned=box.scrollHeight-box.scrollTop-box.clientHeight<24;
+      box.textContent=m.reasoning;
+      el._reasoning=m.reasoning;
+      if(pinned)box.scrollTop=box.scrollHeight;
+    }
+  }
+  /* classList, not className: the streaming cursor adds a second class, and an
+     equality check against 'md' silently stopped matching after the first token
+     — which dumped raw markdown into the transcript for the rest of the reply. */
+  if(el._body.classList.contains('md')){
+    el._body.innerHTML=renderMarkdown(m.text||'');
+    el._body.classList.toggle('cursor',!!m.streaming);
+    if(!m.streaming)addCopyButtons(el._body);
+  }else el._body.textContent=m.text||'';
+  el._raw=m.text||'';
+  if(!m.streaming)addMessageCopy(el);
+  if(stick)window.scrollTo(0,document.body.scrollHeight);
+}
+
+/* ---------- copy ---------- */
+
+/* One Copy per finished message. The raw markdown is copied rather than the
+   rendered text, so what lands on the clipboard is what the model actually
+   wrote — headings and code fences intact. */
+function addMessageCopy(el){
+  if(el.querySelector('.msgCopy'))return;
+  const b=document.createElement('button');
+  b.className='msgCopy';b.type='button';
+  b.setAttribute('aria-label','Copy this message as Markdown');
+  b.title='Copy this message as Markdown';
+  setIcon(b,'copy');
+  b.addEventListener('click',e=>{
+    e.stopPropagation();
+    writeClipboard(el._raw||'',b,'Copy');
+  });
+  el.appendChild(b);
+}
+
+/* The whole exchange as Markdown, speaker-labelled. */
+function conversationMarkdown(){
+  const out=[];
+  log.querySelectorAll('.msg').forEach(el=>{
+    const who=(el._role||'').trim()||(el.classList.contains('user')?'User':'Assistant');
+    out.push('## '+who+'\n\n'+(el._raw||'').trim());
+  });
+  return out.join('\n\n---\n\n')+'\n';
+}
+
+/* Lucide-style line icons, drawn inline: 24x24, 2px round stroke, currentColor.
+   Inline because the page loads no files at all — see the CSP note up top. */
+const ICON={
+  copy:'<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>'+
+       '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  check:'<path d="M20 6 9 17l-5-5"/>',
+  x:'<path d="M18 6 6 18M6 6l12 12"/>'
+};
+
+function icon(name){
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('viewBox','0 0 24 24');
+  svg.setAttribute('fill','none');
+  svg.setAttribute('stroke','currentColor');
+  svg.setAttribute('stroke-width','2');
+  svg.setAttribute('stroke-linecap','round');
+  svg.setAttribute('stroke-linejoin','round');
+  svg.setAttribute('aria-hidden','true');
+  // Fixed strings from ICON above, never anything a model wrote.
+  svg.innerHTML=ICON[name]||'';
+  return svg;
+}
+
+function setIcon(button,name){
+  button.textContent='';
+  button.appendChild(icon(name));
+}
+
+/* Icon-only buttons, so the confirmation is a tick rather than a word. */
+function writeClipboard(text,button,restore){
+  const done=(name,label)=>{
+    setIcon(button,name);
+    button.classList.toggle('ok',name==='check');
+    button.classList.toggle('bad',name==='x');
+    setTimeout(()=>{
+      setIcon(button,restore);
+      button.classList.remove('ok','bad');
+    },1200);
+  };
+  navigator.clipboard.writeText(text)
+    .then(()=>done('check'))
+    .catch(()=>done('x'));
+}
+
+document.getElementById('copyAll').addEventListener('click',()=>{
+  const b=document.getElementById('copyAll');
+  const text=conversationMarkdown();
+  if(!text.trim()){b.textContent='Nothing yet';setTimeout(()=>{b.textContent='Copy all'},1200);return}
+  writeClipboard(text,b,'Copy all');
+});
+
+/* ---------- find in transcript ---------- */
+
+/* Walks text nodes and wraps matches in <mark>. Working on text nodes rather
+   than innerHTML means a search can never re-parse model output as markup. */
+const find={box:document.getElementById('find'),
+            input:document.getElementById('findInput'),
+            count:document.getElementById('findCount'),
+            hits:[],at:-1};
+
+function clearHits(){
+  find.hits=[];find.at=-1;
+  log.querySelectorAll('mark.hit').forEach(mark=>{
+    const parent=mark.parentNode;
+    parent.replaceChild(document.createTextNode(mark.textContent),mark);
+    parent.normalize();
+  });
+}
+
+function runFind(term){
+  clearHits();
+  const needle=String(term||'').trim().toLowerCase();
+  if(!needle){find.count.textContent='';return}
+
+  const walker=document.createTreeWalker(log,NodeFilter.SHOW_TEXT,{
+    acceptNode(node){
+      if(!node.nodeValue||!node.nodeValue.toLowerCase().includes(needle))return NodeFilter.FILTER_REJECT;
+      // Skip the button labels this file added, so "copy" does not match itself.
+      if(node.parentElement.closest('.msgCopy,.copy,#chrome'))return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const targets=[];
+  while(walker.nextNode())targets.push(walker.currentNode);
+
+  targets.forEach(node=>{
+    const text=node.nodeValue;
+    const frag=document.createDocumentFragment();
+    let i=0;
+    for(;;){
+      const at=text.toLowerCase().indexOf(needle,i);
+      if(at<0)break;
+      if(at>i)frag.appendChild(document.createTextNode(text.slice(i,at)));
+      const mark=document.createElement('mark');
+      mark.className='hit';
+      mark.textContent=text.substr(at,needle.length);
+      frag.appendChild(mark);
+      find.hits.push(mark);
+      i=at+needle.length;
+    }
+    if(i<text.length)frag.appendChild(document.createTextNode(text.slice(i)));
+    node.parentNode.replaceChild(frag,node);
+  });
+
+  find.count.textContent=find.hits.length?('1/'+find.hits.length):'none';
+  if(find.hits.length){find.at=0;focusHit()}
+}
+
+function focusHit(){
+  find.hits.forEach(h=>h.classList.remove('current'));
+  const hit=find.hits[find.at];
+  if(!hit)return;
+  hit.classList.add('current');
+  hit.scrollIntoView({block:'center'});
+  find.count.textContent=(find.at+1)+'/'+find.hits.length;
+}
+
+function stepHit(delta){
+  if(!find.hits.length)return;
+  find.at=(find.at+delta+find.hits.length)%find.hits.length;
+  focusHit();
+}
+
+function openFind(){
+  find.box.classList.add('on');
+  find.input.focus();
+  find.input.select();
+}
+
+function closeFind(){
+  find.box.classList.remove('on');
+  find.input.value='';
+  clearHits();
+  find.count.textContent='';
+}
+
+let findTimer=null;
+find.input.addEventListener('input',()=>{
+  clearTimeout(findTimer);
+  findTimer=setTimeout(()=>runFind(find.input.value),140);
+});
+find.input.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();stepHit(e.shiftKey?-1:1)}
+  if(e.key==='Escape'){e.preventDefault();closeFind()}
+});
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='f'){e.preventDefault();openFind()}
+  if(e.key==='Escape'&&find.box.classList.contains('on'))closeFind();
+});
+
+/* Swift calls these. Arguments arrive as JSON strings so nothing is eval'd. */
+window.atlasChat={
+  setAll(json){try{setAll(JSON.parse(json))}catch(e){console.error('setAll',e)}},
+  update(json){try{update(JSON.parse(json))}catch(e){console.error('update',e)}},
+  clear(){setAll([])},
+  /* test hook, unused by the app */
+  _render:renderMarkdown
+};
+</script>
+</body>
+</html>

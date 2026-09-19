@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Calendar & tasks dashboard.
+
+  This is a dashboard, not a calendar grid. There is no month/week/day view:
+  the mini month orients you, the day card and the upcoming list carry the
+  detail, and tasks and bills sit beside them rather than in a rail.
+
+  Unlike chat.html, this page IS allowed to call into the app: the content here
+  is the user's own calendar, not text a language model wrote. It talks back
+  through a fixed, named set of actions (see ACTIONS below and the switch in
+  CalendarBridge.handle) — the page can ask for "move this event", never "run this".
+
+  Everything that comes from EventKit reaches the DOM as textContent, never as
+  markup: a calendar invite from a stranger is untrusted text too.
+  Pure logic lives between the marker comments so Tests/calendar_view_test.js can
+  extract and test it without a browser.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATLAS Calendar</title>
+<style>
+/* Shared tokens, reset, controls and components arrive from atlas-theme.css /
+   atlas-components.css, injected ahead of this block. Only the dashboard's own
+   geometry lives here. */
+:root{
+  --gap: 12px;
+  --rail: 62px;   /* width of the time column in the day card */
+}
+html,body{overflow:hidden}
+#app{display:flex;flex-direction:column;height:100%}
+#quick{flex:0 1 300px}
+#quick.busy{border-color:var(--edge)}
+
+/* ---------- the deck ---------- */
+#deck{
+  flex:1;min-height:0;display:grid;gap:var(--gap);padding:var(--gap);
+  grid-template-columns:repeat(12,1fr);
+  grid-template-rows:minmax(230px,42%) minmax(0,1fr);
+}
+#cardDay{grid-column:span 5}
+#cardMonth{grid-column:span 4}
+#cardBills{grid-column:span 3}
+#cardUp{grid-column:span 8}
+#cardTasks{grid-column:span 4}
+
+.card{display:flex;flex-direction:column;min-width:0;min-height:0;padding:12px 13px}
+.card__body{flex:1;min-height:0;overflow-y:auto;margin-right:-5px;padding-right:5px}
+.card__foot{flex:none;margin-top:9px;padding-top:8px;border-top:1px solid var(--edge-soft);
+  display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--muted)}
+.atlas-cap button{font-size:var(--fs-label);letter-spacing:var(--ls-caps)}
+/* The caption is a baseline-aligned flex row, so a bare wrapper collapses
+   narrow and stacks its buttons. */
+.atlas-cap .nav{display:flex;gap:2px;flex:none}
+.blank{padding:16px 2px;text-align:center;font-size:var(--fs-meta);color:var(--faint)}
+
+/* ---------- day card ---------- */
+.dayhead{flex:none;display:flex;align-items:flex-end;gap:11px;margin-bottom:11px}
+.dayhead .n{font-size:38px;font-weight:600;line-height:.86;letter-spacing:-.025em}
+.dayhead .w{display:flex;flex-direction:column;gap:2px;padding-bottom:2px}
+.dayhead .w b{font-size:var(--fs-body);font-weight:600;letter-spacing:var(--ls-caps);
+  text-transform:uppercase}
+.dayhead .w span{font-size:var(--fs-micro);letter-spacing:var(--ls-micro);
+  text-transform:uppercase;color:var(--faint)}
+.dayhead .back{margin-left:auto}
+
+/* One row per event. The rail is a real column so the times line up as a
+   ruler down the side rather than drifting with each title's length. */
+.slot{display:grid;grid-template-columns:var(--rail) 1fr;gap:10px;align-items:start;
+  padding:7px 6px 7px 0;border-radius:var(--r-md);cursor:pointer;position:relative}
+.slot:hover{background:rgba(255,255,255,.045)}
+.slot+.slot{margin-top:1px}
+.slot .when{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:var(--fs-micro);color:var(--muted);text-align:right;padding-top:2px;
+  letter-spacing:var(--ls-micro);text-transform:uppercase}
+.slot .what{min-width:0;border-left:2px solid var(--gold-dim);padding-left:9px}
+.slot.now .what{border-left-color:var(--gold)}
+.slot .nm{font-size:var(--fs-read);line-height:1.35;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.slot .sub{font-size:var(--fs-micro);color:var(--faint);margin-top:2px;
+  letter-spacing:var(--ls-micro);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slot.past{opacity:.45}
+
+/* ---------- mini month ---------- */
+.mm{flex:1;min-height:0;display:flex;flex-direction:column;gap:3px}
+.mm .dow{display:grid;grid-template-columns:repeat(7,1fr);flex:none}
+.mm .dow span{text-align:center;font-size:var(--fs-micro);font-weight:700;
+  letter-spacing:var(--ls-caps);color:var(--faint)}
+.mm .grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(7,1fr);
+  grid-auto-rows:1fr;gap:2px}
+.mmd{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  border-radius:var(--r-sm);cursor:pointer;min-height:0;
+  font-size:var(--fs-meta);font-variant-numeric:tabular-nums}
+.mmd:hover{background:rgba(255,255,255,.055)}
+.mmd.dim{color:var(--faint)}
+.mmd.sel{box-shadow:inset 0 0 0 1px var(--edge);background:rgba(255,255,255,.03)}
+.mmd .num{width:19px;height:19px;display:grid;place-items:center;border-radius:50%;flex:none}
+.mmd.today .num{background:var(--gold);color:var(--bg);font-weight:700}
+.mmd .dots{display:flex;gap:2px;height:3px;align-items:center}
+.mmd .dots i{width:3px;height:3px;border-radius:50%;background:var(--gold-dim);display:block}
+.mmd.dim .dots i{background:var(--faint)}
+
+/* ---------- upcoming ---------- */
+.up{display:grid;grid-template-columns:76px 1fr;gap:11px;align-items:baseline;
+  padding:8px 6px;border-radius:var(--r-md);cursor:pointer}
+.up:hover{background:rgba(255,255,255,.045)}
+.up+.up{border-top:1px solid var(--edge-soft);border-radius:0}
+.up .d{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--fs-micro);
+  letter-spacing:var(--ls-micro);text-transform:uppercase;color:var(--muted);text-align:right}
+.up.is-weekend .d{color:var(--faint)}
+.up .items{display:flex;flex-wrap:wrap;gap:5px;min-width:0}
+.up .none{font-size:var(--fs-meta);color:var(--faint)}
+.pill{font-size:var(--fs-meta);line-height:1.4;padding:2px 8px;border-radius:999px;
+  background:rgba(255,255,255,.06);border:1px solid var(--edge-soft);
+  max-width:30ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pill b{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:400;
+  color:var(--muted);margin-right:5px}
+
+/* ---------- tasks & bills ---------- */
+.row{display:flex;gap:9px;padding:8px 7px;border-radius:var(--r-md);align-items:flex-start;
+  border:1px solid transparent}
+.row:hover{background:rgba(255,255,255,.04);border-color:var(--edge-soft)}
+.row .box{width:15px;height:15px;border-radius:50%;border:1.5px solid var(--gold-dim);
+  flex:none;margin-top:1px;cursor:pointer}
+.row .box:hover{border-color:var(--gold);background:rgba(255,255,255,.16)}
+.row .text{min-width:0;flex:1}
+.row .nm{font-size:var(--fs-body);line-height:1.4}
+.row .meta{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--fs-micro);
+  color:var(--faint);margin-top:2px}
+.row .meta.over{color:var(--err)}
+.row .amt{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--fs-meta);
+  color:var(--text);flex:none;padding-top:1px}
+.row .x{flex:none;opacity:0;color:var(--faint);cursor:pointer;font-size:13px;line-height:1;
+  padding:1px 3px;border-radius:3px}
+.row:hover .x{opacity:1}
+.row .x:hover{color:var(--err);background:rgba(255,59,48,.12)}
+
+/* The add field only takes the space it needs, so a short list does not sit
+   under a permanently open form. */
+#addTask{display:none}
+#addTask.on{display:flex}
+
+/* ---------- editor sheet ---------- */
+.sheet{width:390px;padding:18px}
+.sheet .pair{display:flex;gap:9px}
+.sheet .pair>*{flex:1}
+.sheet .acts{display:flex;gap:9px;margin-top:17px;align-items:center}
+.sheet .acts .spacer{flex:1}
+
+@media (max-width:1180px){
+  #deck{grid-template-columns:repeat(6,1fr);grid-template-rows:none;
+    grid-auto-rows:minmax(220px,auto);overflow-y:auto}
+  #cardDay{grid-column:span 6}
+  #cardMonth{grid-column:span 3}
+  #cardBills{grid-column:span 3}
+  #cardUp{grid-column:span 6}
+  #cardTasks{grid-column:span 6}
+}
+@media (max-width:720px){
+  #deck{grid-template-columns:1fr}
+  #deck>*{grid-column:1 / -1}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar atlas-toolbar">
+    <div class="atlas-toolbar__id">Calendar</div>
+    <div id="context" class="atlas-toolbar__context"></div>
+    <div class="spacer atlas-spacer"></div>
+    <div id="quick" class="atlas-field">
+      <input id="quickInput" placeholder="lunch with Ada thursday 1pm" spellcheck="false"
+             aria-label="Quick add an event">
+      <span class="hint atlas-field__hint" id="quickHint">Quick add</span>
+    </div>
+    <button class="atlas-btn atlas-btn--ghost" id="journalDay"
+            title="Open the journal for the selected day">Journal</button>
+    <button class="atlas-btn atlas-btn--primary" id="newEvent">New event</button>
+  </div>
+
+  <div id="deck">
+    <section class="card atlas-panel" id="cardDay">
+      <div class="dayhead" id="dayHead"></div>
+      <div class="card__body" id="dayBody"></div>
+      <div class="card__foot" id="dayFoot"></div>
+    </section>
+
+    <section class="card atlas-panel" id="cardMonth">
+      <div class="atlas-cap">
+        <span id="mmTitle">—</span>
+        <span class="nav">
+          <button class="atlas-iconbtn" id="mmPrev" aria-label="Previous month">&#8249;</button>
+          <button class="atlas-iconbtn" id="mmNext" aria-label="Next month">&#8250;</button>
+        </span>
+      </div>
+      <div class="mm">
+        <div class="dow" id="mmDow"></div>
+        <div class="grid" id="mmGrid"></div>
+      </div>
+    </section>
+
+    <section class="card atlas-panel" id="cardBills">
+      <div class="atlas-cap">Bills <em id="billTotal"></em></div>
+      <div class="card__body" id="billList"></div>
+    </section>
+
+    <section class="card atlas-panel" id="cardUp">
+      <div class="atlas-cap">Next 7 days <em id="upCount"></em></div>
+      <div class="card__body" id="upList"></div>
+    </section>
+
+    <section class="card atlas-panel" id="cardTasks">
+      <div class="atlas-cap">Tasks <em id="taskCount"></em></div>
+      <div class="card__body" id="taskList"></div>
+      <div class="card__foot">
+        <button class="atlas-btn atlas-btn--ghost" id="taskAdd">+ New task</button>
+        <div class="atlas-field" id="addTask" style="flex:1">
+          <input id="taskInput" placeholder="What needs doing?" spellcheck="false"
+                 aria-label="New task">
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div id="veil" class="atlas-veil"><div class="sheet atlas-sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+<div id="toast" class="atlas-toast" role="status" aria-live="polite"></div>
+
+<script>
+'use strict';
+/* ---------- pure logic (tested in Tests/calendar_view_test.js) ---------- */
+const MIN = 60000, HOUR = 60 * MIN, DAY = 24 * HOUR;
+/* The reminder list and calendar BillCalendarSync writes into. Anything in it
+   is money, and is shown as money rather than as another task. */
+const BILL_LIST = 'ATLAS Bills';
+
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g, ch =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+const startOfDay = d => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const startOfWeek = d => addDays(startOfDay(d), -startOfDay(d).getDay());
+const sameDay = (a, b) => startOfDay(a).getTime() === startOfDay(b).getTime();
+
+/* The six-week window behind the mini month. */
+function rangeFor(anchor){
+  const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const start = startOfWeek(first);
+  return { start, end: addDays(start, 42) };
+}
+
+/* What to ask Swift for: the month on screen, plus the week ahead of *now*.
+   Those two overlap in the usual case and do not when you page the mini month
+   away from today — and the upcoming card must keep working when you do. */
+function dashboardRange(anchor, now){
+  const grid = rangeFor(anchor);
+  const soon = startOfDay(now);
+  return {
+    start: new Date(Math.min(grid.start.getTime(), soon.getTime())),
+    end: new Date(Math.max(grid.end.getTime(), addDays(soon, 8).getTime()))
+  };
+}
+
+/* The 42 dates of the mini month, Sunday first. */
+function monthGrid(anchor){
+  const start = rangeFor(anchor).start;
+  return Array.from({ length: 42 }, (_, i) => addDays(start, i));
+}
+
+/* Events touching a day, all-day first then by start time. An event is on a day
+   if it overlaps it at all, so a three-day trip shows on all three. */
+function eventsOn(events, day){
+  const from = startOfDay(day).getTime(), to = from + DAY;
+  return events.filter(ev => ev.start < to && ev.end > from)
+    .sort((a, b) => (a.allDay ? 0 : 1) - (b.allDay ? 0 : 1) || a.start - b.start);
+}
+
+/* The next `count` days after `from`, each with its events. */
+function upcomingDays(events, from, count){
+  return Array.from({ length: count }, (_, i) => {
+    const date = addDays(startOfDay(from), i + 1);
+    return { date, events: eventsOn(events, date) };
+  });
+}
+
+const isBill = item => (item.list || item.calendar || '') === BILL_LIST;
+
+/* "Chat GPT Plus — $21.28" is one string in EventKit but two things on screen.
+   A title with no amount comes back whole, so nothing is lost when the format
+   changes. */
+function splitAmount(title){
+  const match = String(title).match(/^(.*?)\s*[—–-]\s*(\$[\d,]+(?:\.\d{1,2})?)$/);
+  return match ? { name: match[1].trim(), amount: match[2] } : { name: String(title), amount: '' };
+}
+function totalOf(items){
+  const sum = items.reduce((run, item) => {
+    const amount = splitAmount(item.title).amount;
+    return run + (amount ? parseFloat(amount.replace(/[$,]/g, '')) || 0 : 0);
+  }, 0);
+  return sum ? '$' + sum.toFixed(2) : '';
+}
+
+/* Due dates read as words near today and as a date further out, because
+   "Tomorrow" is the thing you act on and "12 Oct" is the thing you note. */
+function dueLabel(due, now){
+  if (!due) return { text: '', over: false };
+  const date = new Date(due), today = startOfDay(now);
+  const days = Math.round((startOfDay(date) - today) / DAY);
+  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (date.getTime() < now) {
+    const late = Math.max(1, Math.round((today - startOfDay(date)) / DAY));
+    return { text: days === 0 ? 'Overdue · ' + time : late + 'd overdue', over: true };
+  }
+  if (days === 0) return { text: 'Today · ' + time, over: false };
+  if (days === 1) return { text: 'Tomorrow · ' + time, over: false };
+  if (days < 7) return { text: date.toLocaleDateString(undefined, { weekday: 'long' }) + ' · ' + time, over: false };
+  return { text: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), over: false };
+}
+
+/* One line saying what the shape of the day is. An empty day should read as
+   available, not as a hole. */
+function freeText(events, day, now){
+  const timed = events.filter(ev => !ev.allDay);
+  if (!events.length) return 'Nothing scheduled';
+  if (!timed.length) return events.length + (events.length === 1 ? ' all-day entry' : ' all-day entries');
+  const last = Math.min(timed.reduce((run, ev) => Math.max(run, ev.end), 0),
+                        startOfDay(day).getTime() + DAY);
+  if (sameDay(day, now) && last <= now) return 'Clear for the rest of the day';
+  return 'Free after ' + clockLabel(new Date(last));
+}
+
+function pad2(n){ return String(n).padStart(2, '0'); }
+function clockLabel(date){
+  const h = date.getHours(), m = date.getMinutes();
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return m === 0 ? `${hour12}${h < 12 ? 'am' : 'pm'}` : `${hour12}:${pad2(m)}${h < 12 ? 'am' : 'pm'}`;
+}
+/* Local time as the value a datetime-local input wants. toISOString would shift
+   the whole calendar by the timezone offset. */
+function localInput(date){
+  return `${date.getFullYear()}-${pad2(date.getMonth()+1)}-${pad2(date.getDate())}` +
+         `T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+/* ---------- end pure logic ---------- */
+
+/* Every message the page may send. The app matches on these names and nothing
+   else, so the page can ask for an action but never name a command. */
+const ACTIONS = ['range','create','update','delete','completeReminder','uncompleteReminder',
+                 'deleteReminder','quickAdd','newReminder','openJournal'];
+function send(action, payload){
+  if (!ACTIONS.includes(action)) return;
+  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.atlas){
+    window.webkit.messageHandlers.atlas.postMessage(JSON.stringify(
+      Object.assign({ action }, payload || {})));
+  }
+}
+
+let state = {
+  anchor: new Date(),                 /* the month the mini calendar shows */
+  selected: startOfDay(new Date()),   /* the day the big card shows */
+  events: [],
+  reminders: [],
+  calendars: [],
+  canWrite: false
+};
+
+const $ = id => document.getElementById(id);
+
+function toast(message, bad){
+  const el = $('toast');
+  el.textContent = message;
+  el.className = 'on' + (bad ? ' bad' : '');
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.className = ''; }, 2600);
+}
+
+function requestRange(){
+  const { start, end } = dashboardRange(state.anchor, new Date());
+  send('range', { start: start.toISOString(), end: end.toISOString() });
+}
+
+/* Swift hands events over with ISO strings; parse once, here. */
+function normalise(list){
+  return (list || []).map(e => ({
+    id: e.id, title: e.title || 'Untitled', location: e.location || '', notes: e.notes || '',
+    start: new Date(e.start).getTime(), end: new Date(e.end).getTime(),
+    calendar: e.calendar || '', allDay: !!e.allDay, editable: e.editable !== false
+  }));
+}
+
+window.atlasCalendar = {
+  render(json){
+    try {
+      const data = JSON.parse(json);
+      state.events = normalise(data.events);
+      state.reminders = data.reminders || [];
+      state.calendars = data.calendars || [];
+      state.canWrite = !!data.canWrite;
+      draw();
+    } catch (e) { console.error('render', e); }
+  },
+  quickAddResult(json){
+    try {
+      const result = JSON.parse(json);
+      $('quick').classList.remove('busy');
+      $('quickHint').textContent = 'Quick add';
+      $('quickInput').disabled = false;
+      if (result.error) { toast(result.error, true); return; }
+      $('quickInput').value = '';
+      toast('Added “' + result.title + '”');
+    } catch (e) { console.error('quickAddResult', e); }
+  },
+  notify(message, bad){ toast(message, bad); }
+};
+
+/* ---------- drawing ---------- */
+function draw(){
+  drawDay();
+  drawMonth();
+  drawBills();
+  drawUpcoming();
+  drawTasks();
+  drawContext();
+}
+
+function clear(node){ while (node.firstChild) node.removeChild(node.firstChild); }
+function el(tag, className, text){
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function selectDay(date){
+  state.selected = startOfDay(date);
+  if (state.selected.getMonth() !== state.anchor.getMonth() ||
+      state.selected.getFullYear() !== state.anchor.getFullYear()){
+    state.anchor = new Date(state.selected);
+    requestRange();
+  }
+  draw();
+}
+
+function drawContext(){
+  const open = state.reminders.filter(r => !r.completed);
+  const bills = open.filter(isBill);
+  const bits = [];
+  bits.push(open.length - bills.length + ' open');
+  if (bills.length) bits.push(bills.length + ' bills');
+  if (!state.canWrite) bits.push('read only');
+  $('context').textContent = bits.join(' · ');
+}
+
+/* ---------- the day ---------- */
+function drawDay(){
+  const day = state.selected, now = Date.now();
+  const list = eventsOn(state.events, day);
+  const head = $('dayHead');
+  clear(head);
+
+  head.appendChild(el('div', 'n', String(day.getDate())));
+  const stack = el('div', 'w');
+  stack.appendChild(el('b', null, sameDay(day, new Date())
+    ? 'Today' : day.toLocaleDateString(undefined, { weekday: 'long' })));
+  stack.appendChild(el('span', null,
+    day.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })));
+  head.appendChild(stack);
+
+  if (!sameDay(day, new Date())){
+    const back = el('button', 'back atlas-btn atlas-btn--ghost', 'Today');
+    back.addEventListener('click', () => { state.anchor = new Date(); selectDay(new Date()); });
+    head.appendChild(back);
+  }
+
+  const body = $('dayBody');
+  clear(body);
+  if (!list.length){
+    const blank = el('div', 'blank', 'No events. Double-click here to add one.');
+    blank.addEventListener('dblclick', () => newEventOn(day));
+    body.appendChild(blank);
+  }
+  list.forEach(ev => {
+    const row = el('div', 'slot' + (ev.end < now ? ' past' : '') +
+      (ev.start <= now && ev.end > now ? ' now' : ''));
+    row.appendChild(el('div', 'when', ev.allDay ? 'all day' : clockLabel(new Date(ev.start))));
+
+    const what = el('div', 'what');
+    what.appendChild(el('div', 'nm', ev.title));
+    const bits = [];
+    if (!ev.allDay) bits.push(clockLabel(new Date(ev.start)) + ' – ' + clockLabel(new Date(ev.end)));
+    if (ev.location) bits.push(ev.location);
+    if (ev.calendar) bits.push(ev.calendar);
+    if (bits.length) what.appendChild(el('div', 'sub', bits.join(' · ')));
+    row.appendChild(what);
+
+    row.title = ev.title;
+    row.addEventListener('click', () => openEditor(ev));
+    body.appendChild(row);
+  });
+
+  const foot = $('dayFoot');
+  clear(foot);
+  foot.appendChild(el('span', null, freeText(list, day, Date.now())));
+  const add = el('button', 'atlas-btn atlas-btn--ghost', '+ Event');
+  add.style.marginLeft = 'auto';
+  add.addEventListener('click', () => newEventOn(day));
+  foot.appendChild(add);
+}
+
+function newEventOn(day){
+  const at = new Date(day);
+  at.setHours(9, 0, 0, 0);
+  openEditor(null, at);
+}
+
+/* ---------- mini month ---------- */
+function drawMonth(){
+  $('mmTitle').textContent = state.anchor.toLocaleDateString(undefined,
+    { month: 'long', year: 'numeric' });
+
+  const dow = $('mmDow');
+  if (!dow.childElementCount){
+    ['S','M','T','W','T','F','S'].forEach(d => dow.appendChild(el('span', null, d)));
+  }
+
+  const grid = $('mmGrid');
+  clear(grid);
+  const today = new Date();
+  monthGrid(state.anchor).forEach(date => {
+    const count = eventsOn(state.events, date).length;
+    const cell = el('div', 'mmd' +
+      (date.getMonth() === state.anchor.getMonth() ? '' : ' dim') +
+      (sameDay(date, today) ? ' today' : '') +
+      (sameDay(date, state.selected) ? ' sel' : ''));
+    cell.appendChild(el('div', 'num', String(date.getDate())));
+
+    const dots = el('div', 'dots');
+    for (let i = 0; i < Math.min(count, 3); i++) dots.appendChild(el('i'));
+    cell.appendChild(dots);
+
+    cell.title = count ? count + (count === 1 ? ' event' : ' events') : 'Nothing scheduled';
+    cell.addEventListener('click', () => selectDay(date));
+    grid.appendChild(cell);
+  });
+}
+
+/* ---------- bills ---------- */
+function drawBills(){
+  const bills = state.reminders.filter(r => !r.completed && isBill(r));
+  $('billTotal').textContent = totalOf(bills);
+
+  const list = $('billList');
+  clear(list);
+  if (!bills.length){ list.appendChild(el('div', 'blank', 'Nothing due')); return; }
+
+  bills.forEach(bill => {
+    const parts = splitAmount(bill.title);
+    const row = el('div', 'row');
+
+    const box = el('div', 'box');
+    box.title = 'Mark paid';
+    box.addEventListener('click', () => send('completeReminder', { id: bill.id }));
+    row.appendChild(box);
+
+    const text = el('div', 'text');
+    text.appendChild(el('div', 'nm', parts.name));
+    const due = dueLabel(bill.due, Date.now());
+    if (due.text) text.appendChild(el('div', 'meta' + (due.over ? ' over' : ''), due.text));
+    row.appendChild(text);
+
+    if (parts.amount) row.appendChild(el('div', 'amt', parts.amount));
+    list.appendChild(row);
+  });
+}
+
+/* ---------- next 7 days ---------- */
+function drawUpcoming(){
+  const days = upcomingDays(state.events, new Date(), 7);
+  const total = days.reduce((run, day) => run + day.events.length, 0);
+  $('upCount').textContent = total ? total + (total === 1 ? ' event' : ' events') : 'clear';
+
+  const list = $('upList');
+  clear(list);
+  days.forEach(day => {
+    const row = el('div', 'up' + ([0,6].includes(day.date.getDay()) ? ' is-weekend' : ''));
+    row.appendChild(el('div', 'd', day.date.toLocaleDateString(undefined,
+      { weekday: 'short', day: 'numeric' })));
+
+    const items = el('div', 'items');
+    if (!day.events.length) items.appendChild(el('div', 'none', '—'));
+    day.events.forEach(ev => {
+      const pill = el('div', 'pill');
+      if (!ev.allDay) pill.appendChild(el('b', null, clockLabel(new Date(ev.start))));
+      pill.appendChild(document.createTextNode(ev.title));
+      pill.title = ev.title;
+      items.appendChild(pill);
+    });
+    row.appendChild(items);
+
+    row.addEventListener('click', () => selectDay(day.date));
+    list.appendChild(row);
+  });
+}
+
+/* ---------- tasks ---------- */
+function drawTasks(){
+  const tasks = state.reminders.filter(r => !r.completed && !isBill(r));
+  $('taskCount').textContent = tasks.length ? tasks.length + ' open' : '';
+
+  const list = $('taskList');
+  clear(list);
+  if (!tasks.length){ list.appendChild(el('div', 'blank', 'Nothing to do')); return; }
+
+  tasks.forEach(task => {
+    const row = el('div', 'row');
+
+    const box = el('div', 'box');
+    box.title = 'Mark done';
+    box.addEventListener('click', () => send('completeReminder', { id: task.id }));
+    row.appendChild(box);
+
+    const text = el('div', 'text');
+    text.appendChild(el('div', 'nm', task.title));
+    const due = dueLabel(task.due, Date.now());
+    const bits = [task.list, due.text].filter(Boolean);
+    if (bits.length) text.appendChild(el('div', 'meta' + (due.over ? ' over' : ''), bits.join(' · ')));
+    row.appendChild(text);
+
+    const kill = el('div', 'x', '×');
+    kill.title = 'Delete';
+    kill.addEventListener('click', () => send('deleteReminder', { id: task.id }));
+    row.appendChild(kill);
+
+    list.appendChild(row);
+  });
+}
+
+/* ---------- editor ---------- */
+function openEditor(ev, defaultStart){
+  const isNew = !ev;
+  const start = ev ? new Date(ev.start) : (defaultStart || new Date());
+  const end = ev ? new Date(ev.end) : new Date(start.getTime() + HOUR);
+  const sheet = $('sheet');
+
+  const options = state.calendars.map(c =>
+    `<option value="${escapeHtml(c.id)}">${escapeHtml(c.title)}</option>`).join('');
+
+  sheet.innerHTML = `
+    <h3 class="atlas-sheet__title">${isNew ? 'New event' : 'Edit event'}</h3>
+    <label class="atlas-label">Title</label>
+    <input class="atlas-input" id="fTitle" value="${escapeHtml(ev ? ev.title : '')}" placeholder="What is it?">
+    <div class="pair">
+      <div><label class="atlas-label">Starts</label><input class="atlas-input" type="datetime-local" id="fStart" value="${localInput(start)}"></div>
+      <div><label class="atlas-label">Ends</label><input class="atlas-input" type="datetime-local" id="fEnd" value="${localInput(end)}"></div>
+    </div>
+    <label class="atlas-label">Location</label>
+    <input class="atlas-input" id="fLoc" value="${escapeHtml(ev ? ev.location : '')}" placeholder="Optional">
+    <label class="atlas-label">Notes</label>
+    <textarea class="atlas-input" id="fNotes" rows="2" placeholder="Optional">${escapeHtml(ev ? ev.notes : '')}</textarea>
+    ${isNew ? `<label class="atlas-label">Calendar</label><select class="atlas-input" id="fCal">${options}</select>` : ''}
+    <div class="acts">
+      ${!isNew && ev.editable ? '<button class="atlas-btn atlas-btn--danger atlas-btn--ghost" id="fDelete">Delete</button>' : ''}
+      <div class="spacer"></div>
+      <button class="atlas-btn atlas-btn--ghost" id="fCancel">Cancel</button>
+      <button class="atlas-btn atlas-btn--primary" id="fSave">${isNew ? 'Create' : 'Save'}</button>
+    </div>`;
+
+  $('veil').classList.add('on');
+  setTimeout(() => $('fTitle').focus(), 30);
+
+  $('fCancel').addEventListener('click', closeEditor);
+  if ($('fDelete')) $('fDelete').addEventListener('click', () => {
+    send('delete', { id: ev.id });
+    closeEditor();
+  });
+  $('fSave').addEventListener('click', () => {
+    const title = $('fTitle').value.trim();
+    if (!title){ toast('Give it a title', true); return; }
+    const payload = {
+      title,
+      start: new Date($('fStart').value).toISOString(),
+      end: new Date($('fEnd').value).toISOString(),
+      location: $('fLoc').value,
+      notes: $('fNotes').value
+    };
+    if (isNew){
+      if ($('fCal')) payload.calendarId = $('fCal').value;
+      send('create', payload);
+    } else {
+      payload.id = ev.id;
+      send('update', payload);
+    }
+    closeEditor();
+  });
+}
+function closeEditor(){ $('veil').classList.remove('on'); }
+$('veil').addEventListener('click', e => { if (e.target === $('veil')) closeEditor(); });
+
+/* ---------- wiring ---------- */
+const stepMonth = direction => {
+  state.anchor = new Date(state.anchor.getFullYear(), state.anchor.getMonth() + direction, 1);
+  requestRange();
+  draw();
+};
+$('mmPrev').addEventListener('click', () => stepMonth(-1));
+$('mmNext').addEventListener('click', () => stepMonth(1));
+
+$('newEvent').addEventListener('click', () => newEventOn(state.selected));
+$('journalDay').addEventListener('click', () => {
+  // The day you are looking at, not necessarily today: reading back over a week
+  // and writing about the day in front of you is the point.
+  send('openJournal', { start: state.selected.toISOString() });
+});
+
+$('quickInput').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const text = e.target.value.trim();
+  if (!text) return;
+  // The model does the parsing, so this can sit for a few seconds. Say so.
+  $('quick').classList.add('busy');
+  $('quickHint').textContent = 'Reading…';
+  e.target.disabled = true;
+  send('quickAdd', { text });
+});
+
+$('taskAdd').addEventListener('click', () => {
+  const field = $('addTask');
+  field.classList.toggle('on');
+  if (field.classList.contains('on')) $('taskInput').focus();
+});
+$('taskInput').addEventListener('keydown', e => {
+  if (e.key === 'Escape'){ $('addTask').classList.remove('on'); return; }
+  if (e.key !== 'Enter') return;
+  const title = e.target.value.trim();
+  if (!title) return;
+  send('newReminder', { title, start: state.selected.toISOString() });
+  e.target.value = '';
+  $('addTask').classList.remove('on');
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeEditor();
+});
+
+draw();
+requestRange();
+</script>
+</body>
+</html>
